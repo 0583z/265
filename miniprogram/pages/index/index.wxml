@@ -1,0 +1,330 @@
+<view class="container">
+  <view class="header">
+    <view class="header-content">
+      <text class="title">高校竞赛中心</text>
+      <text class="subtitle">College Competition Hub</text>
+    </view>
+    <view class="search-box-container">
+      <view class="search-box">
+        <icon type="search" size="16" color="#fff" />
+        <input 
+          placeholder="搜索竞赛名称..." 
+          placeholder-class="placeholder" 
+          bindinput="onSearch" 
+          bindblur="hideSuggestions"
+          value="{{searchQuery}}" 
+        />
+      </view>
+      <view class="suggestions-panel" wx:if="{{showSuggestions}}">
+        <view class="suggestion-item" wx:for="{{suggestions}}" wx:key="*this" bindtap="selectSuggestion" data-name="{{item}}">
+          <icon type="search" size="12" color="#ccc" />
+          <text class="suggestion-text">{{item}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <scroll-view scroll-y class="main-scroll" scroll-with-animation>
+    <block wx:if="{{activeTab === 'home'}}">
+      <view class="recommend-card">
+        <view class="recommend-header">✨ <text>智能推荐竞赛</text></view>
+        <view class="recommend-body">
+          目标：<text class="blue">{{userGoal}}</text> <text class="sep">|</text> 专业：<text class="blue">{{userMajor}}</text>
+        </view>
+      </view>
+      <view class="list-title">🏆 专属适配推荐</view>
+      <view wx:for="{{filteredCompetitions}}" wx:key="id" class="comp-item" bindtap="viewDetail" data-id="{{item.id}}">
+        <view class="comp-top">
+          <text class="comp-name">{{item.name}}</text>
+          <text class="level-badge">{{item.level}}</text>
+        </view>
+        <view class="comp-time">⏰ 截止：<text class="red">{{item.daysLeft === '已截止' ? '已截止' : '还剩 ' + item.daysLeft + ' 天'}}</text></view>
+        <view class="comp-tags">
+          <text class="tag" wx:for="{{item.techStack}}" wx:for-item="t" wx:key="*this">{{t}}</text>
+        </view>
+      </view>
+    </block>
+
+    <block wx:if="{{activeTab === 'hall'}}">
+      <view class="hall-hero">优秀获奖作品展示</view>
+      <view wx:for="{{hallOfFame}}" wx:key="id" class="hall-item">
+        <text class="project-title">{{item.projectName}}</text>
+        <text class="project-desc">{{item.teamIntro}}</text>
+      </view>
+    </block>
+
+    <block wx:if="{{activeTab === 'profile'}}">
+      <view class="profile-section">
+        <view class="user-card">
+          <view class="avatar">{{userName[0]}}</view>
+          <view class="info">
+            <text class="name">{{userName}}</text>
+            <text class="sub">{{userMajor}} | {{userGrade}}</text>
+          </view>
+          <view class="edit-btn" bindtap="openEditModal">编辑</view>
+        </view>
+        <view class="stats-grid">
+          <view class="stat-cell"><text class="num">{{followedIds.length}}</text><text class="lab">已关注</text></view>
+          <view class="stat-cell"><text class="num">{{registeredIds.length}}</text><text class="lab">已报名</text></view>
+          <view class="stat-cell"><text class="num">2</text><text class="lab">获奖记录</text></view>
+        </view>
+
+        <!-- 能力雷达图容器 -->
+        <view class="radar-container">
+          <view class="radar-header">
+            <text class="radar-title">🎯 核心能力画像</text>
+            <text class="radar-subtitle">基于获奖动态生成</text>
+          </view>
+          <view class="radar-box">
+            <!-- 需在此处将开源库 echarts-for-weixin 放入项目，使用官方组件渲染 -->
+            <!-- 预计占位：<ec-canvas id="mychart-dom-radar" canvas-id="mychart-radar" ec="{{ ec }}"></ec-canvas> -->
+            <view class="radar-placeholder">
+              <text class="placeholder-text">【开发者提示】</text>
+              <text class="placeholder-desc">请将 echarts-for-weixin 拷入 /components 文件夹以点亮雷达图数据支持。</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 一键生成作品集入口 -->
+        <view class="portfolio-btn" bindtap="openPortfolio">
+          <text>💼 一键生成作品集</text>
+          <text>高光荣誉 × 技能矩阵 × 核心项目</text>
+        </view>
+
+        <view class="menu-box">
+          <view class="menu-row">👥 我的专业 <text class="blue">{{userMajor}} ></text></view>
+          <view class="menu-row">
+            🎯 奋斗目标
+            <view class="goal-btns">
+              <text class="{{userGoal === '保研' ? 'on' : ''}}" bindtap="changeGoal" data-goal="保研">保研</text>
+              <text class="{{userGoal === '就业' ? 'on' : ''}}" bindtap="changeGoal" data-goal="就业">就业</text>
+            </view>
+          </view>
+          <view class="menu-row" bindtap="switchTab" data-tab="home">🔔 订阅提醒 <view class="dot">{{followedIds.length}}</view></view>
+          <view class="menu-row" bindtap="viewCertificates">🏆 证书管理 <text class="grey">↗</text></view>
+        </view>
+      </view>
+    </block>
+  </scroll-view>
+
+  <!-- 悬浮陪伴功能入口（全局显示，可自由拖动） -->
+  <movable-area class="companion-movable-area">
+    <movable-view 
+      class="floating-companion {{!isFoxExpanded ? 'fox-hidden' : ''}}" 
+      direction="all" 
+      x="{{companionX}}" 
+      y="{{companionY}}" 
+      bindtap="onFoxTap"
+      bindtouchend="onFoxDragEnd"
+      animation="true"
+    >
+      <view class="float-icon">🦊</view>
+      <view class="float-dot" wx:if="{{!isCheckedInToday && isFoxExpanded}}"></view>
+    </movable-view>
+  </movable-area>
+
+  <view class="footer-tabs">
+    <view class="tab-btn {{activeTab === 'home' ? 'active' : ''}}" bindtap="switchTab" data-tab="home">🏠<text>首页</text></view>
+    <view class="tab-btn {{activeTab === 'hall' ? 'active' : ''}}" bindtap="switchTab" data-tab="hall">🏆<text>卷王榜</text></view>
+    <view class="tab-btn {{activeTab === 'profile' ? 'active' : ''}}" bindtap="switchTab" data-tab="profile">👤<text>我的</text></view>
+  </view>
+
+  <!-- 专属伴侣/打卡 弹窗 -->
+  <view class="modal-overlay" wx:if="{{showCompanion}}" bindtap="closeCompanion"></view>
+  <view class="companion-popup {{showCompanion ? 'show' : ''}}">
+    <view class="companion-header">
+      <text class="popup-title">🦊 你的专属锦鲤伴侣</text>
+      <text class="popup-close" bindtap="closeCompanion">✕</text>
+    </view>
+    <view class="companion-body">
+      <!-- 伴侣气泡对话 -->
+      <view class="speech-bubble">
+        <text>{{companionMessage}}</text>
+      </view>
+      
+      <!-- 打卡记录板 -->
+      <view class="streak-board">
+        <text class="streak-title">当前连续打卡学习</text>
+        <view class="streak-days"><text class="huge-num">{{checkInDays}}</text>天</view>
+      </view>
+
+      <!-- 打卡按钮 -->
+      <button class="submit-btn {{isCheckedInToday ? 'disabled-btn' : ''}}" bindtap="doCheckIn">
+        {{isCheckedInToday ? '👏 今日已打卡' : '签到打卡，记录努力的今天'}}
+      </button>
+    </view>
+  </view>
+
+  <!-- 编辑个人信息弹窗 -->
+  <view class="modal-overlay" wx:if="{{showEditModal}}" bindtap="closeEditModal"></view>
+  <view class="edit-popup {{showEditModal ? 'show' : ''}}">
+    <view class="popup-header"><text class="popup-title">编辑个人信息</text><text bindtap="closeEditModal">✕</text></view>
+    <view class="popup-body">
+      <view class="field">姓名 <input class="input" value="{{tempName}}" bindinput="onNameInput" /></view>
+      <view class="field">年级 
+        <picker bindchange="onGradeChange" range="{{['大一', '大二', '大三', '大四', '研一', '研二', '研三']}}">
+          <view class="picker-box">{{tempGrade}} ∨</view>
+        </picker>
+      </view>
+    </view>
+    <button class="submit-btn" bindtap="saveProfile">保存修改</button>
+  </view>
+
+  <!-- 首次引导弹窗 -->
+  <view class="modal-overlay force-top" wx:if="{{showOnboarding}}"></view>
+  <view class="onboarding-popup {{showOnboarding ? 'show' : ''}}">
+    <view class="onboard-header">
+      <text class="onboard-title">👋 欢迎来到竞赛中心</text>
+      <text class="onboard-subtitle">为了给您精准推荐竞赛，请完善您的专属信息</text>
+    </view>
+    <view class="popup-body">
+      <view class="field">
+        您的专业
+        <picker bindchange="onboardMajorChange" range="{{['设计', '计算机', '金融', '机械', '医学', '理学', '文学']}}">
+          <view class="picker-box">{{onboardMajor}} <text class="arrow">∨</text></view>
+        </picker>
+      </view>
+      <view class="field">
+        奋斗目标
+        <view class="goal-btns onboard-goals">
+          <text class="{{onboardGoal === '保研' ? 'on' : ''}}" bindtap="selectOnboardGoal" data-goal="保研">保研向</text>
+          <text class="{{onboardGoal === '就业' ? 'on' : ''}}" bindtap="selectOnboardGoal" data-goal="就业">就业向</text>
+        </view>
+      </view>
+    </view>
+    <button class="submit-btn highlight-btn" bindtap="completeOnboarding">开启我的竞赛之旅</button>
+  </view>
+
+  <!-- 证书管理列表弹窗 -->
+  <view class="modal-overlay" wx:if="{{showCertModal}}" bindtap="closeCertModal"></view>
+  <view class="cert-popup {{showCertModal ? 'show' : ''}}">
+    <view class="popup-header"><text class="popup-title">🏆 证书管理</text><text bindtap="closeCertModal">✕</text></view>
+    
+    <view class="add-cert-btn" bindtap="openAddCert">
+      <text>+</text> 录入新成就奖项
+    </view>
+    
+    <view class="cert-list">
+      <view class="cert-header">
+        <text style="font-size: 24rpx; color: #666;">共获取 {{certificates.length}} 项证书</text>
+        <view class="cert-action highlight-action" bindtap="generateAllPoster">生成全部成就海报 ↗</view>
+      </view>
+      <view class="cert-item" wx:for="{{certificates}}" wx:key="id">
+        <view class="cert-info">
+          <text class="cert-name">{{item.name}}</text>
+          <view class="cert-meta">
+            <text class="cert-level">{{item.level}}</text>
+            <text class="cert-date">{{item.date}}</text>
+          </view>
+        </view>
+        <view class="cert-action" bindtap="generatePoster" data-id="{{item.id}}">
+          <text>生成海报 ↗</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 海报预览与保存弹窗 -->
+  <view class="modal-overlay" wx:if="{{showPosterModal}}" bindtap="closePosterModal"></view>
+  <view class="poster-popup {{showPosterModal ? 'show' : ''}}">
+    <view class="poster-wrap">
+      <!-- 原生 Canvas 2D 用于底层绘制，保持视图内可见但使用 CSS 处理使其符合视觉尺寸 -->
+      <canvas type="2d" id="posterCanvas" class="poster-canvas"></canvas>
+    </view>
+    <button class="submit-btn highlight-btn poster-btn" bindtap="savePosterToPhotos">保存到相册，发朋友圈</button>
+    <view class="poster-tip">无流量消耗，基于终端底层渲染</view>
+    <view class="poster-close" bindtap="closePosterModal">✕</view>
+  </view>
+
+  <!-- 录入新成就表单 -->
+  <view class="modal-overlay force-top" wx:if="{{showAddCertForm}}" bindtap="closeAddCert"></view>
+  <view class="edit-popup {{showAddCertForm ? 'show' : ''}}" style="z-index: 10001;">
+    <view class="popup-header"><text class="popup-title">添加获奖记录</text><text bindtap="closeAddCert">✕</text></view>
+    <view class="popup-body">
+      <view class="field">赛事名称 
+        <input class="input" placeholder="例如：第十五届蓝桥杯" value="{{newCert.name}}" data-field="name" bindinput="onNewCertInput"/>
+      </view>
+      <view class="field">获得奖项 
+        <input class="input" placeholder="例如：国家级一等奖" value="{{newCert.level}}" data-field="level" bindinput="onNewCertInput"/>
+      </view>
+      <view class="field">获奖时间 
+        <input class="input" placeholder="例如：2024-04" value="{{newCert.date}}" data-field="date" bindinput="onNewCertInput"/>
+      </view>
+    </view>
+    <button class="submit-btn" bindtap="submitAddCert">保存成就</button>
+  </view>
+
+  <!-- 录入成就关联项目经验表单 -->
+  <view class="modal-overlay force-top" wx:if="{{showAddProjectForm}}" bindtap="closeAddProject"></view>
+  <view class="edit-popup {{showAddProjectForm ? 'show' : ''}}" style="z-index: 10001;">
+    <view class="popup-header"><text class="popup-title">记录沉淀 - 关联项目</text><text bindtap="closeAddProject" style="font-size: 28rpx;">稍后再写</text></view>
+    <scroll-view scroll-y style="max-height: 60vh;">
+      <view class="popup-body" style="padding-bottom: 20rpx;">
+        <view class="field">项目名称
+          <input class="input" placeholder="例如：基于AI的校园路线规划系统" value="{{newProject.name}}" data-field="name" bindinput="onNewProjectInput"/>
+        </view>
+        <view class="field" style="margin-bottom: 10rpx;">应用技能标签 <text style="font-size: 20rpx; color: #999;">(用逗号隔开)</text>
+          <input class="input" placeholder="例如：Python, 算法, 产品设计" value="{{newProject.skills}}" data-field="skills" bindinput="onNewProjectInput"/>
+        </view>
+        
+        <view style="margin: 30rpx 0 10rpx; font-weight: bold; font-size: 28rpx; color: #003366;">💡 STAR 法则梳理 (选填)</view>
+        <view class="field">【S】项目背景
+          <textarea class="input" placeholder="面临了什么挑战？" value="{{newProject.s}}" data-field="s" bindinput="onNewProjectInput" />
+        </view>
+        <view class="field">【T】核心任务
+          <textarea class="input" placeholder="核心任务是什么？" value="{{newProject.t}}" data-field="t" bindinput="onNewProjectInput" />
+        </view>
+        <view class="field">【A】关键行动
+          <textarea class="input" placeholder="采取了什么行动？" value="{{newProject.a}}" data-field="a" bindinput="onNewProjectInput" />
+        </view>
+        <view class="field">【R】最终结果
+          <textarea class="input" placeholder="取得什么量化成果？" value="{{newProject.r}}" data-field="r" bindinput="onNewProjectInput" />
+        </view>
+      </view>
+    </scroll-view>
+    <button class="submit-btn" bindtap="submitAddProject">沉淀至作品集</button>
+  </view>
+
+  <!-- 作品集预览 -->
+  <view class="portfolio-popup {{showPortfolioModal ? 'show' : ''}}">
+    <view class="portfolio-header">
+      <text>黄金三角作品集</text>
+      <text bindtap="closePortfolio" style="font-size: 40rpx; font-weight: normal;">✕</text>
+    </view>
+    
+    <scroll-view scroll-y style="flex: 1; background: #fff;">
+      <view style="padding: 40rpx; padding-bottom: 10rpx;">
+        <view style="text-align: center; font-size: 40rpx; font-weight: bold; margin-bottom: 50rpx; color: #333;">{{userName}} 的技能资产与作品集</view>
+        
+        <view style="font-size: 32rpx; font-weight: bold; color: #003366; margin-bottom: 20rpx; border-bottom: 2rpx solid #eee; padding-bottom: 10rpx;">🌟 核心技能矩阵</view>
+        <view style="display: flex; flex-wrap: wrap; gap: 15rpx; margin-bottom: 40rpx;">
+          <block wx:for="{{projects}}" wx:for-item="proj" wx:key="id">
+            <text wx:for="{{proj.skills}}" wx:for-item="skill" wx:key="*this" style="background: rgba(0,51,102,0.1); color: #003366; padding: 6rpx 20rpx; border-radius: 10rpx; font-size: 24rpx; font-weight: bold;"># {{skill}}</text>
+          </block>
+          <text wx:if="{{projects.length === 0}}" style="color: #999; font-size: 24rpx;">暂无相关技能标签</text>
+        </view>
+
+        <view style="font-size: 32rpx; font-weight: bold; color: #003366; margin-bottom: 20rpx; border-bottom: 2rpx solid #eee; padding-bottom: 10rpx;">🏆 荣誉殿堂</view>
+        <view wx:for="{{certificates}}" wx:key="id" style="margin-bottom: 15rpx; background: #f8f9fb; padding: 20rpx; border-radius: 12rpx;">
+          <view style="font-size: 28rpx; font-weight: bold; color: #333; margin-bottom: 8rpx;">{{item.name}}</view>
+          <view style="font-size: 24rpx; color: #666;">{{item.level}} | {{item.date}}</view>
+        </view>
+
+        <view style="font-size: 32rpx; font-weight: bold; color: #003366; margin-bottom: 20rpx; margin-top: 40rpx; border-bottom: 2rpx solid #eee; padding-bottom: 10rpx;">💼 项目与实战解析</view>
+        <view wx:for="{{projects}}" wx:key="id" style="margin-bottom: 30rpx; border-radius: 16rpx; border: 1rpx solid #eee; padding: 20rpx;">
+          <view style="font-size: 28rpx; font-weight: bold; color: #333; margin-bottom: 15rpx;">{{item.name}}</view>
+          <view style="font-size: 24rpx; color: #555; margin-bottom: 8rpx;"><text style="font-weight: bold; color:#003366;">[S] </text>{{item.s || '见说明'}}</view>
+          <view style="font-size: 24rpx; color: #555; margin-bottom: 8rpx;"><text style="font-weight: bold; color:#003366;">[T] </text>{{item.t || '-'}}</view>
+          <view style="font-size: 24rpx; color: #555; margin-bottom: 8rpx;"><text style="font-weight: bold; color:#003366;">[A] </text>{{item.a || '-'}}</view>
+          <view style="font-size: 24rpx; color: #555;"><text style="font-weight: bold; color:#003366;">[R] </text>{{item.r || '-'}}</view>
+        </view>
+        <text wx:if="{{projects.length === 0}}" style="color: #999; font-size: 24rpx;">暂无项目记录</text>
+      </view>
+    </scroll-view>
+
+    <view class="portfolio-actions">
+      <button class="submit-btn btn-dark" bindtap="copyMarkdown">复制 Markdown 结构导出</button>
+    </view>
+  </view>
+
+</view>

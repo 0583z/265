@@ -1,0 +1,6 @@
+{
+  "name": "高校竞赛中心 (College Competition Hub)",
+  "description": "一个为大学生设计的竞赛信息聚合与订阅平台，包含竞赛倒计时、订阅提醒、卷王榜以及个性化推荐功能。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

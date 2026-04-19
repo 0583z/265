@@ -1,0 +1,27 @@
+<view class="container">
+  <view class="page-header">
+    <text class="page-title">卷王榜 (Hall of Fame)</text>
+    <text class="page-desc">汇聚历届国奖优秀项目，汲取成功经验</text>
+  </view>
+
+  <scroll-view scroll-y class="hall-list">
+    <view class="hall-card" wx:for="{{hallOfFame}}" wx:key="id">
+      <view class="hall-header">
+        <text class="year-badge">{{item.year}}年度</text>
+        <text class="award-text">{{item.awardLevel}}</text>
+      </view>
+      <view class="project-name">{{item.projectName}}</view>
+      <view class="team-info">
+        <text class="label">团队简介：</text>
+        <text class="content">{{item.teamIntro}}</text>
+      </view>
+      <view class="success-key">
+        <view class="key-header">
+          <icon type="info" size="14" color="#003366"/>
+          <text>成功秘籍</text>
+        </view>
+        <text class="key-content">“{{item.keyToSuccess}}”</text>
+      </view>
+    </view>
+  </scroll-view>
+</view>

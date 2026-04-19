@@ -1,0 +1,24 @@
+/** app.wxss **/
+page {
+  background-color: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 28rpx;
+  color: #1a1a1a;
+  box-sizing: border-box;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 模拟 Tailwind 的一些常用类 */
+.bg-white { background-color: #ffffff; }
+.p-4 { padding: 32rpx; }
+.rounded-xl { border-radius: 24rpx; }
+.font-bold { font-weight: bold; }
+.text-muted { color: #666666; }
+.text-blue { color: #003366; }
+.shadow-sm { box-shadow: 0 2rpx 10rpx rgba(0,0,0,0.05); }
