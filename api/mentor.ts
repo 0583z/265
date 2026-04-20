@@ -1,129 +1,85 @@
 import type { Request, Response } from 'express';
-import { deepseekChatCompletion, getDeepseekApiKey } from './_deepseekHttp.ts';
+import fs from 'fs';
+import path from 'path';
 
-const COACH_SYSTEM = `你是严厉但专业的信息学竞赛教练（CCF CSP / NOIP 风格）。
-要求：只用简体中文；短句、可执行；不灌水；不道歉过度；指出问题时一针见血。
-当需要结构化输出时，严格遵守用户要求的 JSON 字段，不要输出多余 Markdown。`;
-
-function safeJsonParse<T>(raw: string): T | null {
+let DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || process.env.VITE_DEEPSEEK_API_KEY;
+if (!DEEPSEEK_API_KEY) {
   try {
-    return JSON.parse(raw) as T;
-  } catch {
-    const m = raw.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    try {
-      return JSON.parse(m[0]) as T;
-    } catch {
-      return null;
+    const envPath = path.resolve(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const envFile = fs.readFileSync(envPath, 'utf8');
+      const match = envFile.match(/(?:VITE_)?DEEPSEEK_API_KEY\s*=\s*(sk-[^\r\n"']+)/);
+      if (match && match[1]) DEEPSEEK_API_KEY = match[1].trim();
     }
-  }
+  } catch (e) {}
 }
 
-export default async function mentorHandler(req: Request, res: Response): Promise<void> {
-  const key = getDeepseekApiKey();
-  if (!key) {
-    res.status(500).json({ error: '服务端未配置 DEEPSEEK_API_KEY' });
-    return;
-  }
+const BASE_URL = 'https://api.deepseek.com/chat/completions';
 
-  const body = req.body || {};
-  const mode = String(body.mode || '');
+export default async function handler(req: Request, res: Response) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    if (mode === 'proactive') {
-      const title = String(body.title || '').slice(0, 500);
-      const category = String(body.category || '').slice(0, 80);
-      const durationMinutes = Number(body.durationMinutes) || 0;
-      const memoryBlock = String(body.memoryBlock || '（无）').slice(0, 4000);
+    if (!DEEPSEEK_API_KEY) return res.status(500).json({ error: 'API Key 未配置' });
 
-      const user = `用户刚完成一次专注。
-标题：${title}
-分类：${category}
-时长：${durationMinutes} 分钟
+    const { mode, content, intent } = req.body;
 
-知识库 / 历史记忆命中摘要：
-${memoryBlock}
+    // 🚨 打卡专用模式：强制 DeepSeek 返回 JSON，提取心情、精力和总结
+    if (mode === 'punch') {
+      const systemPrompt = `你是一个结构化数据提取助手。请根据用户的日记内容，严格提取为 JSON 格式。
+      必须包含：
+      - "summary": 50字以内的核心总结
+      - "mood_score": 1-10的整数，表示心情评估
+      - "energy_score": 1-10的整数，表示精力评估
+      - "wins": 今天的收获(一句话)
+      只输出合法的 JSON 字符串，不要出现任何 markdown 标记 (如 \`\`\`json) 或其他废话。`;
 
-请判断用户当前是否在「架构 / 分层 / 模块边界 / 依赖注入 / 设计原则」等方向深入。若是，在 followUp 里用一句话主动询问是否需要某条具体知识点（例如依赖倒置原则）的深度解析；若否，followUp 可为另一条高质量追问。
-严格输出 JSON：{"title":"string","body":"string","followUp":"string"}`;
-
-      const raw = await deepseekChatCompletion({
-        apiKey: key,
-        messages: [
-          { role: 'system', content: COACH_SYSTEM },
-          { role: 'user', content: user },
-        ],
-        responseFormatJson: true,
+      const aiResponse = await fetch(BASE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: content }],
+          stream: false // 打卡必须等完整结果
+        })
       });
-      const parsed = safeJsonParse<{ title?: string; body?: string; followUp?: string }>(raw);
-      if (!parsed?.title || !parsed?.body) {
-        res.status(500).json({ error: '导师响应解析失败' });
-        return;
-      }
-      res.json({ title: parsed.title, body: parsed.body, followUp: parsed.followUp || '' });
-      return;
+
+      if (!aiResponse.ok) throw new Error('API Request Failed');
+      const data = await aiResponse.json();
+      return res.status(200).json({ result: data.choices[0].message.content });
     }
 
-    if (mode === 'morning') {
-      const contextMarkdown = String(body.contextMarkdown || '').slice(0, 12000);
-      const user = `以下是用户最近的能力雷达、专注与打卡（Markdown）。假设用户正在备战「第 41 届 CCF CSP」。
-请找出最可能的薄弱项（尤其动态规划、图论、贪心、实现细节），给出今日一条可执行训练建议。
+    // --- 分析模式 (保留流式处理) ---
+    const systemPrompt = `你是 GEEK HUB 极客助教。当前意图：${intent || '建议'}。语气硬核。使用 Markdown。`;
+    const aiResponse = await fetch(BASE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: content || '你好' }],
+        stream: true,
+        temperature: 0.7
+      })
+    });
 
-用户画像：
-${contextMarkdown}
+    if (!aiResponse.ok) throw new Error('API Error');
 
-严格输出 JSON：{"title":"string","body":"string","challenge":"string"}`;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
 
-      const raw = await deepseekChatCompletion({
-        apiKey: key,
-        messages: [
-          { role: 'system', content: COACH_SYSTEM },
-          { role: 'user', content: user },
-        ],
-        responseFormatJson: true,
-      });
-      const parsed = safeJsonParse<{ title?: string; body?: string; challenge?: string }>(raw);
-      if (!parsed?.title || !parsed?.body) {
-        res.status(500).json({ error: '早报解析失败' });
-        return;
-      }
-      res.json({
-        title: parsed.title,
-        body: parsed.body,
-        challenge: parsed.challenge || '',
-      });
-      return;
+    const reader = aiResponse.body?.getReader();
+    const decoder = new TextDecoder();
+    if (!reader) throw new Error('流读取失败');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
     }
-
-    if (mode === 'monthly') {
-      const contextMarkdown = String(body.contextMarkdown || '').slice(0, 16000);
-      const monthLabel = String(body.monthLabel || '当月');
-
-      const user = `你是竞赛教练兼技术写作顾问。请根据以下「原始备赛数据」（含 focus_sessions 与 daily_logs 摘录），写一份「${monthLabel}备赛月报」。
-要求：
-- 输出为完整 Markdown，可直接放进简历或大赛说明书；
-- 把口语化打卡（如「修好了 K-Means 的 Bug」）改写成专业项目叙述（问题背景—方法—结果），但不得捏造不存在的具体指标；
-- 分小节：概览 / 技术深度 / 节奏与心态 / 下月建议；
-- 不要代码围栏包裹全文；不要 JSON。
-
-原始数据：
-${contextMarkdown}`;
-
-      const raw = await deepseekChatCompletion({
-        apiKey: key,
-        messages: [
-          { role: 'system', content: COACH_SYSTEM },
-          { role: 'user', content: user },
-        ],
-        responseFormatJson: false,
-      });
-      res.json({ markdown: raw.trim() });
-      return;
-    }
-
-    res.status(400).json({ error: '未知 mode，支持 proactive | morning | monthly' });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : '导师接口异常';
-    res.status(500).json({ error: msg });
+    res.end();
+  } catch (error: any) {
+    if (!res.headersSent) res.status(500).json({ error: error.message });
+    else res.end();
   }
 }

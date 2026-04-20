@@ -1,150 +1,106 @@
 import React, { useState } from 'react';
-import { Mic, FileText, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
+import { Sparkles, Loader2, CheckCircle2, Zap, Smile } from 'lucide-react';
 import { toast } from 'sonner';
-import { supabaseClient } from '@/src/lib/supabaseClient';
-import { refreshGrowthStreak } from '@/src/lib/growthModel';
-import { useMentor } from '@/src/context/MentorContext';
+import { upsertDailyLog, type DailyLogRow } from '@/src/lib/supabaseClient';
 
-type Props = {
-  userId: string | undefined;
-};
-
-export const DailyPunchIn: React.FC<Props> = ({ userId }) => {
-  const { notifyPunchComplete } = useMentor();
-  const [text, setText] = useState('');
+export const DailyPunchIn: React.FC<{ userId: string | undefined; onDataChange?: () => void }> = ({ userId, onDataChange }) => {
+  const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
-  const [listening, setListening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [analyzedData, setAnalyzedData] = useState<Partial<DailyLogRow> | null>(null);
 
-  const startVoice = () => {
-    const w = window as unknown as {
-      SpeechRecognition?: new () => {
-        lang: string;
-        continuous: boolean;
-        interimResults: boolean;
-        onstart: (() => void) | null;
-        onend: (() => void) | null;
-        onerror: (() => void) | null;
-        onresult: ((ev: { results: { 0: { 0: { transcript: string } } } }) => void) | null;
-        start: () => void;
-      };
-      webkitSpeechRecognition?: new () => {
-        lang: string;
-        continuous: boolean;
-        interimResults: boolean;
-        onstart: (() => void) | null;
-        onend: (() => void) | null;
-        onerror: (() => void) | null;
-        onresult: ((ev: { results: { 0: { 0: { transcript: string } } } }) => void) | null;
-        start: () => void;
-      };
-    };
-    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
-    if (!SR) {
-      toast.error('当前浏览器不支持语音识别');
-      return;
-    }
-    const rec = new SR();
-    rec.lang = 'zh-CN';
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.onstart = () => setListening(true);
-    rec.onend = () => setListening(false);
-    rec.onerror = () => {
-      setListening(false);
-      toast.error('语音识别失败');
-    };
-    rec.onresult = (ev) => {
-      const said = ev.results[0]?.[0]?.transcript || '';
-      if (said) setText((t) => (t ? `${t}\n` : '') + said);
-    };
-    rec.start();
-  };
+  const handlePunch = async () => {
+    if (!content.trim()) return toast.error('写点今日进度或感悟吧');
+    if (!userId) return;
 
-  const submit = async () => {
-    if (!userId) {
-      toast.error('请先登录');
-      return;
-    }
-    if (!text.trim()) {
-      toast.error('写几句心得吧');
-      return;
-    }
     setLoading(true);
-    setError(null);
+    setAnalyzedData(null); // 清空上次的结果
     try {
-      const { data: sess } = await supabaseClient.auth.getSession();
-      if (!sess.session) throw new Error('未登录');
-
-      const res = await fetch('/api/chat', {
+      // 1. 调用 AI 获取结构化 JSON
+      const res = await fetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawText: text,
-          mode: 'structured_log',
-        }),
+        body: JSON.stringify({ mode: 'punch', content })
       });
-      const data = (await res.json()) as { summary?: string; error?: string; wins?: string; blockers?: string; mood_score?: number; energy_score?: number };
-      if (!res.ok) throw new Error(data.error || `AI 请求失败 (${res.status})`);
-      if (!data.summary) throw new Error('AI 未返回结构化字段');
+      if (!res.ok) throw new Error('AI 分析失败');
+      const { result } = await res.json();
+      
+      // 2. 清洗 JSON 字符串
+      const cleanJson = result.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
 
-      const logDate = new Date().toISOString().slice(0, 10);
-      const { error } = await supabaseClient.from('daily_logs').upsert(
-        {
-          user_id: userId,
-          log_date: logDate,
-          summary: data.summary,
-          wins: data.wins || '',
-          blockers: data.blockers || '',
-          mood_score: Number(data.mood_score) || 3,
-          energy_score: Number(data.energy_score) || 3,
-        },
-        { onConflict: 'user_id,log_date' },
-      );
-      if (error) throw error;
-      await refreshGrowthStreak(userId);
-      void notifyPunchComplete({ summary: data.summary });
-      toast.success('打卡已转为结构化备赛日志');
-      setText('');
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '提交失败';
-      setError(msg);
-      toast.error(msg);
+      const logData: DailyLogRow = {
+        user_id: userId,
+        log_date: new Date().toISOString().slice(0, 10),
+        summary: parsed.summary || content.slice(0, 100),
+        mood_score: parsed.mood_score || 8,
+        energy_score: parsed.energy_score || 8,
+        wins: parsed.wins || '',
+        blockers: parsed.blockers || ''
+      };
+
+      // 3. 落库
+      await upsertDailyLog(logData);
+      
+      // 4. 显示给用户看，并刷新日历
+      setAnalyzedData(logData);
+      toast.success('打卡成功，AI 已提炼核心数据');
+      setContent('');
+      if (onDataChange) onDataChange();
+
+    } catch (e: any) {
+      console.error(e);
+      // 如果 AI 故障，兜底直接存纯文本
+      await upsertDailyLog({ user_id: userId, log_date: new Date().toISOString().slice(0, 10), summary: content.slice(0, 100) });
+      toast.success('文本已保存（AI 提取暂时不可用）');
+      setContent('');
+      if (onDataChange) onDataChange();
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="rounded-[28px] border-2 border-gray-900 bg-white p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] space-y-3">
-      <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-gray-500">
-        <FileText className="w-4 h-4" />
-        DailyPunchIn
+    <div className="flex flex-col h-full space-y-6 max-w-lg mx-auto w-full">
+      <div className="flex items-center gap-2 text-zinc-400 font-black text-xs uppercase tracking-widest">
+        <Sparkles className="w-4 h-4" /> 备赛日志助手
       </div>
-      <Textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="语音或键盘输入今日备赛心得…"
-        className="min-h-[120px] border-2 border-gray-900 rounded-xl font-medium"
+
+      <textarea
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="写下今日进度、技术难点或感悟..."
+        className="w-full h-40 bg-zinc-950 border-2 border-zinc-800 rounded-2xl p-4 font-bold text-white focus:border-fuchsia-500 transition-all resize-none shadow-inner outline-none"
       />
-      {error && <p className="text-xs font-bold text-red-600">{error}</p>}
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="flex-1 h-11 rounded-xl font-black border-2 border-gray-900"
-          onClick={startVoice}
-          disabled={listening || loading}
-        >
-          <Mic className="w-4 h-4 mr-2" />
-          {listening ? '聆听中…' : '语音输入'}
-        </Button>
-        <Button className="flex-1 h-11 rounded-xl font-black bg-emerald-600" onClick={() => void submit()} disabled={loading}>
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'AI 结构化'}
-        </Button>
-      </div>
+
+      <Button 
+        onClick={handlePunch} 
+        disabled={loading || !content.trim()} 
+        className="h-14 bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-black rounded-xl shadow-lg active:scale-95 transition-all"
+      >
+        {loading ? <Loader2 className="animate-spin w-5 h-5 mr-2" /> : <Sparkles className="w-5 h-5 mr-2" />}
+        {loading ? 'AI 神经元提取中...' : 'AI 结构化分析并打卡'}
+      </Button>
+
+      {/* 🚨 AI 分析结果明文展示给用户 */}
+      {analyzedData && (
+        <div className="bg-zinc-950 border border-fuchsia-900/50 p-5 rounded-2xl animate-in slide-in-from-bottom-4 shadow-xl">
+          <div className="flex items-center gap-2 text-fuchsia-400 text-[10px] font-black uppercase tracking-widest mb-3">
+            <CheckCircle2 className="w-4 h-4" /> AI_DATA_EXTRACTED
+          </div>
+          <p className="text-zinc-300 font-bold text-sm leading-relaxed mb-4">{analyzedData.summary}</p>
+          <div className="flex gap-3">
+            <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+              <Smile className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-black text-amber-400">心情: {analyzedData.mood_score}/10</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+              <Zap className="w-4 h-4 text-blue-400" />
+              <span className="text-xs font-black text-blue-400">精力: {analyzedData.energy_score}/10</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

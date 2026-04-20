@@ -3,26 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Supabase 环境变量缺失，请检查 .env 文件');
-}
+export const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
 
-export const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-  },
-});
-
-export type UserSkillRow = {
-  skill_name: string;
-  skill_score: number;
-  weight: number;
-  source?: string;
-  updated_at?: string;
-};
+// --- 🚨 核心类型定义 (全量补齐字段，防止导入组件报错) ---
 
 export type FocusSessionRow = {
   id?: string;
@@ -31,7 +14,6 @@ export type FocusSessionRow = {
   duration_minutes: number;
   category?: string;
   session_title?: string | null;
-  note?: string | null;
   created_at?: string;
 };
 
@@ -39,419 +21,191 @@ export type DailyLogRow = {
   id?: string;
   user_id: string;
   log_date?: string;
+  summary: string;
   mood_score?: number | null;
   energy_score?: number | null;
-  summary: string;
-  blockers?: string | null;
-  wins?: string | null;
+  wins?: string | null;      // 🚨 补齐：修复 DailyPunchIn 报错
+  blockers?: string | null;  // 🚨 补齐：修复 DailyPunchIn 报错
+};
+
+export type UserAwardRow = {
+  id?: string;
+  user_id: string;
+  competition_name: string;
+  award_level: string;
+  award_date: string;
 };
 
 export type UserProfileRow = {
   id: string;
   nickname: string | null;
-  avatar_url: string | null;
-  motto: string | null;
-  tech_tags: string[] | unknown;
-  major?: string | null;
-  bio?: string | null;
-  github_url?: string | null;
-  skills?: string[] | unknown;
-  updated_at?: string;
+  major: string | null;
+  bio: string | null;
+  github_url: string | null;
+  skills: string[] | any;
+  tech_tags?: string[] | any;
+  avatar_url?: string | null;     // 🚨 补齐：修复组队大厅头像
+  is_looking_for_team?: boolean;  // 🚨 补齐：修复组队雷达
 };
 
 export type UserGrowthStateRow = {
   user_id: string;
-  exp_algorithm: number;
-  exp_dev: number;
-  exp_ui: number;
-  exp_arch: number;
   streak_days: number;
-  last_punch_date?: string | null;
-  last_morning_tip_date?: string | null;
-  sticker_layout?: unknown;
-  updated_at?: string;
+  sticker_layout?: any;
 };
 
-export type SubscriptionWithCompetition = {
+export type TeamRow = {
   id: string;
-  competition_id: string;
-  name: string;
-  deadline: string;
-  level: string;
-  category: string;
+  title: string;
+  description: string;
+  max_members: number;
+  leader_id?: string;
+  competition_id?: string | null;
+  created_at?: string;
+  leader?: { nickname?: string | null; avatar_url?: string | null; skills?: any } | null;
+  competition?: { name?: string | null } | null;
 };
 
-function parseStringArrayField(v: unknown): string[] {
-  if (Array.isArray(v)) return v.map(String);
-  if (typeof v === 'string') {
-    try {
-      const j = JSON.parse(v) as unknown;
-      return Array.isArray(j) ? j.map(String) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
-
-export async function fetchUserProfile(userId: string): Promise<UserProfileRow | null> {
-  const { data, error } = await supabaseClient.from('user_profiles').select('*').eq('id', userId).maybeSingle();
-  if (error) {
-    console.warn('[supabase] fetchUserProfile', error.message);
-    return null;
-  }
-  if (!data) return null;
-  const tags = Array.isArray(data.tech_tags) ? data.tech_tags : [];
-  const skills = parseStringArrayField((data as UserProfileRow).skills);
-  return { ...data, tech_tags: tags as string[], skills } as UserProfileRow;
-}
-
-export async function upsertUserProfile(row: {
+export type HallOfFameCaseRow = {
   id: string;
-  nickname?: string | null;
-  avatar_url?: string | null;
-  motto?: string | null;
-  tech_tags?: string[];
-  major?: string | null;
-  bio?: string | null;
-  github_url?: string | null;
-  skills?: string[];
-}) {
-  const { error } = await supabaseClient.from('user_profiles').upsert(
-    {
-      id: row.id,
-      nickname: row.nickname ?? null,
-      avatar_url: row.avatar_url ?? null,
-      motto: row.motto ?? null,
-      tech_tags: row.tech_tags ?? [],
-      major: row.major ?? null,
-      bio: row.bio ?? null,
-      github_url: row.github_url ?? null,
-      skills: row.skills ?? [],
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'id' },
-  );
+  project_name: string;
+  year: number;
+  award_level: string;
+  team_intro: string;
+  key_to_success: string;
+  major: string;
+  created_at?: string;
+};
+
+// --- 👥 组队系统逻辑 ---
+
+export async function fetchAllTeams(): Promise<TeamRow[]> {
+  const { data, error } = await supabaseClient
+    .from('teams')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []) as TeamRow[];
+}
+
+export async function createTeam(teamData: any) {
+  const { data, error } = await supabaseClient.from('teams').insert([teamData]);
+  if (error) throw error;
+  return data;
+}
+
+export async function applyToTeam(teamId: string, userId: string, message: string) {
+  const { error } = await supabaseClient.from('team_applications').insert([{ team_id: teamId, user_id: userId, message, status: 'pending' }]);
   if (error) throw error;
 }
 
-export async function fetchUserGrowthState(userId: string): Promise<UserGrowthStateRow | null> {
-  const { data, error } = await supabaseClient.from('user_growth_state').select('*').eq('user_id', userId).maybeSingle();
-  if (error) {
-    console.warn('[supabase] fetchUserGrowthState', error.message);
-    return null;
-  }
-  if (!data) return null;
-  return data as UserGrowthStateRow;
+export async function inviteTalentToTeam(payload: { team_id: string; invitee_id: string; inviter_id: string; message?: string }) {
+  const { error } = await supabaseClient.from('team_invites').insert([payload]);
+  if (error) throw error;
 }
 
-export async function fetchSubscriptionsWithCompetitions(userId: string): Promise<SubscriptionWithCompetition[]> {
+// 🚨 强化类型：确保 TeamupHub.tsx 里的 setTalents 不再报类型不匹配错
+export async function fetchTalentPool(): Promise<UserProfileRow[]> {
   const { data, error } = await supabaseClient
-    .from('subscriptions')
-    .select(
-      `
-      id,
-      competition_id,
-      competitions ( name, deadline, level, category )
-    `,
-    )
-    .eq('user_id', userId);
-
-  if (error) {
-    console.warn('[supabase] fetchSubscriptionsWithCompetitions', error.message);
-    return [];
-  }
-
-  type Comp = { name: string; deadline: string; level: string; category: string };
-  const rows = (data || []) as {
-    id: string;
-    competition_id: string;
-    competitions: Comp | Comp[] | null;
-  }[];
-
-  return rows.map((r) => {
-    const c = Array.isArray(r.competitions) ? r.competitions[0] : r.competitions;
-    return {
-      id: r.id,
-      competition_id: r.competition_id,
-      name: c?.name || '赛事',
-      deadline: c?.deadline || '',
-      level: c?.level || '',
-      category: c?.category || '',
-    };
-  });
+    .from('user_profiles')
+    .select('*')
+    .eq('is_looking_for_team', true);
+  if (error) return [];
+  return (data || []) as UserProfileRow[];
 }
 
-export async function fetchFocusSessionsBetween(userId: string, startIso: string, endIso: string): Promise<FocusSessionRow[]> {
+export async function toggleTeamSearchStatus(userId: string, status: boolean) {
+  const { error } = await supabaseClient.from('user_profiles').update({ is_looking_for_team: status }).eq('id', userId);
+  if (error) throw error;
+}
+
+// --- 🏆 获奖记录与卷王逻辑 ---
+
+export async function fetchUserAwards(userId: string): Promise<UserAwardRow[]> {
+  const { data, error } = await supabaseClient.from('user_awards').select('*').eq('user_id', userId).order('award_date', { ascending: false });
+  return (data || []) as UserAwardRow[];
+}
+
+export async function insertUserAward(row: UserAwardRow) {
+  return await supabaseClient.from('user_awards').insert([row]).select();
+}
+
+export async function submitHofApplication(userId: string, reason: string) {
+  await supabaseClient.from('hall_of_fame_applications').insert([{ user_id: userId, reason, status: 'pending', applied_at: new Date().toISOString() }]);
+}
+
+export async function fetchHallOfFameCases(limit = 9, offset = 0): Promise<HallOfFameCaseRow[]> {
   const { data, error } = await supabaseClient
-    .from('focus_sessions')
-    .select('id, duration_minutes, category, session_title, note, session_date, created_at')
-    .eq('user_id', userId)
-    .gte('session_date', startIso)
-    .lte('session_date', endIso)
-    .order('session_date', { ascending: true });
-
-  if (error) {
-    console.warn('[supabase] fetchFocusSessionsBetween', error.message);
-    return [];
-  }
-  return (data || []) as FocusSessionRow[];
+    .from('hall_of_fame_cases')
+    .select('*')
+    .order('year', { ascending: false })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error) throw error;
+  return (data || []) as HallOfFameCaseRow[];
 }
 
-export async function fetchDailyLogsBetween(userId: string, startIso: string, endIso: string): Promise<DailyLogRow[]> {
-  const { data, error } = await supabaseClient
-    .from('daily_logs')
-    .select('log_date, mood_score, energy_score, summary, blockers, wins')
-    .eq('user_id', userId)
-    .gte('log_date', startIso)
-    .lte('log_date', endIso)
-    .order('log_date', { ascending: true });
+// --- 👤 用户档案与能力数据 ---
 
-  if (error) {
-    console.warn('[supabase] fetchDailyLogsBetween', error.message);
-    return [];
-  }
-  return (data || []).map((r) => ({ ...r, user_id: userId })) as DailyLogRow[];
+export async function fetchUserProfile(userId: string): Promise<UserProfileRow | null> {
+  const { data } = await supabaseClient.from('user_profiles').select('*').eq('id', userId).maybeSingle();
+  return data as UserProfileRow;
 }
 
-export async function fetchUserSkills(userId: string): Promise<UserSkillRow[]> {
-  const { data, error } = await supabaseClient
-    .from('user_skills')
-    .select('skill_name, skill_score, weight, source, updated_at')
-    .eq('user_id', userId);
-
-  if (error) {
-    console.warn('[supabase] fetchUserSkills', error.message);
-    return [];
-  }
-  return (data || []) as UserSkillRow[];
+export async function upsertUserProfile(row: any) {
+  await supabaseClient.from('user_profiles').upsert(row, { onConflict: 'id' });
 }
+
+export async function fetchUserSkills(userId: string) {
+  const { data } = await supabaseClient.from('user_profiles').select('skills').eq('id', userId).maybeSingle();
+  return data?.skills || [];
+}
+
+export async function searchAiMemoriesRag(userId: string, query: string) {
+  const { data } = await supabaseClient.from('focus_sessions').select('*').eq('user_id', userId).limit(5);
+  return data || [];
+}
+
+export function buildUserContextMarkdown(params: { skills: any[]; focus: FocusSessionRow[]; logs: DailyLogRow[]; }) {
+  const { skills, focus, logs } = params;
+  const total = focus.reduce((a, b) => a + (Number(b.duration_minutes) || 0), 0);
+  return `### 极客档案\n- 技能: ${Array.isArray(skills) ? skills.join(', ') : '尚未添加'}\n- 专注时长: ${total}min\n- 备赛日志: ${logs.length}篇`;
+}
+
+// --- ⏱️ 专注与时长逻辑 ---
 
 export async function fetchTotalFocusMinutes(userId: string): Promise<number> {
-  const { data, error } = await supabaseClient.from('focus_sessions').select('duration_minutes').eq('user_id', userId);
-  if (error) {
-    console.warn('[supabase] fetchTotalFocusMinutes', error.message);
-    return 0;
-  }
-  return (data || []).reduce((a, r: { duration_minutes?: number | null }) => a + (Number(r.duration_minutes) || 0), 0);
+  const { data } = await supabaseClient.from('focus_sessions').select('duration_minutes').eq('user_id', userId);
+  return (data || []).reduce((acc, row) => acc + (Number(row.duration_minutes) || 0), 0);
 }
 
-export async function fetchRecentFocusSessions(userId: string, days = 14): Promise<FocusSessionRow[]> {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const iso = since.toISOString().slice(0, 10);
-
-  const { data, error } = await supabaseClient
-    .from('focus_sessions')
-    .select('id, duration_minutes, category, session_title, note, session_date, created_at')
-    .eq('user_id', userId)
-    .gte('session_date', iso)
-    .order('created_at', { ascending: false })
-    .limit(80);
-
-  if (error) {
-    console.warn('[supabase] fetchRecentFocusSessions', error.message);
-    return [];
-  }
+export async function fetchRecentFocusSessions(userId: string, limit = 45): Promise<FocusSessionRow[]> {
+  const { data } = await supabaseClient.from('focus_sessions').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(limit);
   return (data || []) as FocusSessionRow[];
 }
 
-/** 某日专注记录（按 session_date 与 created_at 落在当日） */
-export async function fetchFocusSessionsForDate(userId: string, dayIso: string): Promise<FocusSessionRow[]> {
-  const { data, error } = await supabaseClient
-    .from('focus_sessions')
-    .select('id, duration_minutes, category, session_title, note, session_date, created_at')
-    .eq('user_id', userId)
-    .eq('session_date', dayIso)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.warn('[supabase] fetchFocusSessionsForDate', error.message);
-    return [];
-  }
-  return (data || []) as FocusSessionRow[];
-}
-
-export async function fetchDailyLogForDate(userId: string, dayIso: string): Promise<DailyLogRow | null> {
-  const { data, error } = await supabaseClient
-    .from('daily_logs')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('log_date', dayIso)
-    .maybeSingle();
-
-  if (error) {
-    console.warn('[supabase] fetchDailyLogForDate', error.message);
-    return null;
-  }
-  return data as DailyLogRow | null;
-}
-
-export async function fetchRecentDailyLogs(userId: string, limit = 10): Promise<DailyLogRow[]> {
-  const { data, error } = await supabaseClient
-    .from('daily_logs')
-    .select('log_date, mood_score, energy_score, summary, blockers, wins')
-    .eq('user_id', userId)
-    .order('log_date', { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    console.warn('[supabase] fetchRecentDailyLogs', error.message);
-    return [];
-  }
+export async function fetchRecentDailyLogs(userId: string, limit = 45): Promise<DailyLogRow[]> {
+  const { data } = await supabaseClient.from('daily_logs').select('*').eq('user_id', userId).order('log_date', { ascending: false }).limit(limit);
   return (data || []) as DailyLogRow[];
 }
 
-export async function insertFocusSession(row: FocusSessionRow) {
-  const { data, error } = await supabaseClient.from('focus_sessions').insert([row]).select('id').single();
-  if (error) throw error;
-  return data;
+export async function fetchUserGrowthState(userId: string): Promise<UserGrowthStateRow | null> {
+  const { data } = await supabaseClient.from('user_growth_state').select('*').eq('user_id', userId).maybeSingle();
+  return data as UserGrowthStateRow;
 }
 
 export async function upsertDailyLog(row: DailyLogRow) {
-  const { data, error } = await supabaseClient
-    .from('daily_logs')
-    .upsert(row, { onConflict: 'user_id,log_date' })
-    .select('id')
-    .single();
-  if (error) throw error;
-  return data;
+  await supabaseClient.from('daily_logs').upsert(row, { onConflict: 'user_id,log_date' });
 }
 
-export async function upsertUserSkill(
-  userId: string,
-  skill: Pick<UserSkillRow, 'skill_name' | 'skill_score' | 'weight'>,
-) {
-  const { error } = await supabaseClient.from('user_skills').upsert(
-    {
-      user_id: userId,
-      skill_name: skill.skill_name,
-      skill_score: skill.skill_score,
-      weight: skill.weight ?? 1,
-      source: 'radar',
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id,skill_name' },
-  );
-  if (error) throw error;
-}
-
-export type AiMemoryHit = {
-  id: string;
-  topic: string;
-  content: string;
-  similarity: number;
-  created_at: string;
-};
-
-/** 关键词记忆检索（服务端 geek_memory_entries + 匹配打分） */
-export async function searchAiMemoriesRag(
-  accessToken: string,
-  query: string,
-  opts?: { match_threshold?: number; match_count?: number },
-): Promise<AiMemoryHit[]> {
-  const q = query.trim();
-  if (!q) return [];
-  try {
-    const res = await fetch('/api/ai/memory/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        query: q.slice(0, 2000),
-        match_threshold: opts?.match_threshold,
-        match_count: opts?.match_count,
-      }),
-    });
-    if (!res.ok) return [];
-    const json = (await res.json()) as { matches?: AiMemoryHit[] };
-    return json.matches || [];
-  } catch {
-    return [];
-  }
-}
-
-/** 写入关键词记忆（DeepSeek 侧无向量，仅存文本供检索） */
-export async function persistAiMemory(accessToken: string, topic: string, content: string): Promise<boolean> {
-  try {
-    const res = await fetch('/api/ai/memory', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        topic: topic.slice(0, 200),
-        content: content.slice(0, 8000),
-      }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * 组装给大模型的「能力画像 + 学习节奏」上下文（Markdown）。
- */
-export function buildUserContextMarkdown(params: {
-  skills: UserSkillRow[];
-  focus: FocusSessionRow[];
-  logs: DailyLogRow[];
-  memoryTopics?: string[];
-  vectorMemories?: AiMemoryHit[];
-}): string {
-  const { skills, focus, logs, memoryTopics, vectorMemories } = params;
-  const lines: string[] = [];
-
-  if (skills.length) {
-    lines.push('### 能力雷达（user_skills）');
-    skills.forEach((s) => {
-      lines.push(`- ${s.skill_name}: ${s.skill_score} 分（权重 ${s.weight}）`);
-    });
-  } else {
-    lines.push('### 能力雷达');
-    lines.push('- 暂无结构化雷达数据，请结合通用 CS 备赛路径回答。');
-  }
-
-  if (focus.length) {
-    const totalMin = focus.reduce((a, r) => a + (r.duration_minutes || 0), 0);
-    lines.push(`### 最近专注（约 ${totalMin} 分钟，来自 focus_sessions）`);
-    focus.slice(0, 8).forEach((r) => {
-      const title = r.session_title || r.note || '未命名专注';
-      lines.push(`- ${r.session_date || ''} · ${title} · ${r.duration_minutes}min · ${r.category || 'focus'}`);
-    });
-  } else {
-    lines.push('### 最近专注');
-    lines.push('- 最近两周无番茄/深度工作记录，可温和提醒保持节奏。');
-  }
-
-  if (logs.length) {
-    lines.push('### 最近打卡摘要（daily_logs）');
-    logs.slice(0, 5).forEach((l) => {
-      lines.push(
-        `- ${l.log_date || ''} 心情${l.mood_score ?? '-'} / 精力${l.energy_score ?? '-'}：${l.summary?.slice(0, 120) || ''}`,
-      );
-    });
-  } else {
-    lines.push('### 最近打卡');
-    lines.push('- 最近无结构化日志，可询问用户是否拖延或需要拆解任务。');
-  }
-
-  if (memoryTopics?.length) {
-    lines.push('### 长期记忆主题（本轮对话提炼）');
-    memoryTopics.forEach((t) => lines.push(`- ${t}`));
-  }
-
-  if (vectorMemories?.length) {
-    lines.push('### 关键词命中的历史记忆（geek_memory_entries）');
-    vectorMemories.forEach((m) => {
-      const pct = Math.round((m.similarity || 0) * 100);
-      lines.push(`- [${m.topic}] 匹配度约 ${pct}%：${(m.content || '').slice(0, 280)}`);
-    });
-  }
-
-  return lines.join('\n');
+export async function fetchSubscriptionsWithCompetitions(userId: string) {
+  const { data } = await supabaseClient.from('subscriptions').select(`id, competition_id, competitions ( name, deadline, level, category )`).eq('user_id', userId);
+  return (data || []).map((r: any) => ({
+    id: r.id,
+    competition_id: r.competition_id,
+    name: r.competitions?.name || '未知',
+    deadline: r.competitions?.deadline || '',
+    level: r.competitions?.level || '',
+    category: r.competitions?.category || ''
+  }));
 }

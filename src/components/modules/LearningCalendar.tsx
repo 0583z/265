@@ -1,121 +1,236 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  addDays,
-  addMonths,
-  eachDayOfInterval,
-  endOfMonth,
-  format,
-  isSameMonth,
-  startOfMonth,
-  differenceInCalendarDays,
-  subMonths,
-} from 'date-fns';
-import { zhCN } from 'date-fns/locale';
-import { CalendarDays, Flame } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { addDays, eachDayOfInterval, format, isSameMonth, startOfMonth, endOfMonth, differenceInCalendarDays, subMonths, addMonths } from 'date-fns';
+import { 
+  CalendarDays, 
+  Flame, 
+  Zap, 
+  ChevronLeft, 
+  ChevronRight, 
+  PenLine, 
+  Target, 
+  Trophy 
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { fetchRecentFocusSessions } from '@/src/lib/supabaseClient';
+import { motion, AnimatePresence } from 'framer-motion';
+import { type FocusSessionRow, type DailyLogRow } from '@/src/lib/supabaseClient';
 
-type Props = {
+// 🚨 必须接收 App.tsx 传下来的全量比赛数据和订阅 ID
+interface LearningCalendarProps {
   userId: string | undefined;
-};
-
-type ExamNode = { id: string; name: string; date: Date };
-
-const EXAMS_2026: ExamNode[] = [
-  { id: 'csp', name: 'CCF CSP-J/S', date: new Date('2026-09-20T00:00:00') },
-  { id: 'cumcm', name: '国赛建模', date: new Date('2026-09-11T00:00:00') },
-  { id: 'lanqiao', name: '蓝桥杯国赛', date: new Date('2026-06-07T00:00:00') },
-];
-
-function computePressureIndex(params: { nextExamDays: number | null; focusMinutes14d: number }): number {
-  const { nextExamDays, focusMinutes14d } = params;
-  const urgency =
-    nextExamDays == null ? 25 : Math.min(95, Math.round(520 / Math.max(1, nextExamDays + 3)));
-  const slackGoal = 14 * 45;
-  const slack = Math.min(1, focusMinutes14d / slackGoal);
-  const laziness = Math.round((1 - slack) * 35);
-  return Math.max(12, Math.min(100, Math.round(urgency * 0.55 + laziness + 10)));
+  sessions: FocusSessionRow[];
+  logs?: DailyLogRow[];
+  competitions?: any[];      // 所有的比赛字典
+  subscribedIds?: string[];  // 用户订阅的 ID 列表
 }
 
-export const LearningCalendar: React.FC<Props> = ({ userId }) => {
+export const LearningCalendar: React.FC<LearningCalendarProps> = ({ 
+  sessions, 
+  logs = [], 
+  competitions = [], 
+  subscribedIds = [] 
+}) => {
   const [cursor, setCursor] = useState(() => new Date());
-  const [focusMin, setFocusMin] = useState(0);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!userId) return;
-    void (async () => {
-      const rows = await fetchRecentFocusSessions(userId, 14);
-      const sum = rows.reduce((a, r) => a + (r.duration_minutes || 0), 0);
-      setFocusMin(sum);
-    })();
-  }, [userId, cursor]);
+  // 🚨 核心逻辑：数据大一统映射
+  const { focusMin14d, dateMap } = useMemo(() => {
+    const today = new Date();
+    const map: Record<string, { 
+      total: number; 
+      titles: string[]; 
+      log: DailyLogRow | null; 
+      deadlines: string[] 
+    }> = {};
+    let sum14d = 0;
 
+    // 1. 处理专注数据 (Heatmap)
+    (sessions || []).forEach(s => {
+      if (!s.session_date) return;
+      if (!map[s.session_date]) map[s.session_date] = { total: 0, titles: [], log: null, deadlines: [] };
+      const dur = Number(s.duration_minutes) || 0;
+      map[s.session_date].total += dur;
+      if (s.session_title && !map[s.session_date].titles.includes(s.session_title)) {
+        map[s.session_date].titles.push(s.session_title);
+      }
+      if (differenceInCalendarDays(today, new Date(s.session_date)) <= 14) sum14d += dur;
+    });
+
+    // 2. 处理打卡数据 (Purple Dot)
+    (logs || []).forEach(l => {
+      if (!l.log_date) return;
+      if (!map[l.log_date]) map[l.log_date] = { total: 0, titles: [], log: null, deadlines: [] };
+      map[l.log_date].log = l;
+    });
+
+    // 3. 🚨 核心修复：处理订阅的 DDL (Red Badge)
+    subscribedIds.forEach(id => {
+      const comp = competitions.find(c => String(c.id) === String(id));
+      if (comp && comp.deadline) {
+        // 格式化日期为 YYYY-MM-DD
+        const ddlStr = comp.deadline.includes('T') ? comp.deadline.split('T')[0] : comp.deadline;
+        if (!map[ddlStr]) map[ddlStr] = { total: 0, titles: [], log: null, deadlines: [] };
+        // 避免重复添加
+        if (!map[ddlStr].deadlines.includes(comp.name)) {
+          map[ddlStr].deadlines.push(comp.name);
+        }
+      }
+    });
+
+    return { focusMin14d: sum14d, dateMap: map };
+  }, [sessions, logs, competitions, subscribedIds]);
+
+  const pressure = Math.min(100, Math.round((1 - (focusMin14d / 630)) * 40 + 30));
   const monthStart = startOfMonth(cursor);
   const monthEnd = endOfMonth(cursor);
-  const gridStart = addDays(monthStart, -((monthStart.getDay() + 6) % 7));
-  const gridEnd = addDays(monthEnd, (7 - ((monthEnd.getDay() + 6) % 7) - 1) % 7);
-  const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
-
-  const nextExam = useMemo(() => {
-    const today = new Date();
-    const future = EXAMS_2026.filter((e) => e.date >= today).sort((a, b) => a.date.getTime() - b.date.getTime());
-    return future[0] ?? null;
-  }, []);
-
-  const nextExamDays = nextExam ? differenceInCalendarDays(nextExam.date, new Date()) : null;
-  const pressure = computePressureIndex({ nextExamDays, focusMinutes14d: focusMin });
+  
+  // 补齐日历网格
+  const days = eachDayOfInterval({
+    start: addDays(monthStart, -((monthStart.getDay() + 6) % 7)),
+    end: addDays(monthEnd, (7 - ((monthEnd.getDay() + 6) % 7) - 1) % 7)
+  });
 
   return (
-    <div className="rounded-[28px] border-2 border-gray-900 bg-white p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-gray-500">
-          <CalendarDays className="w-4 h-4" />
-          LearningCalendar
+    <div className="flex flex-col h-full space-y-4">
+      <div className="bg-zinc-900 border-2 border-zinc-800 rounded-[2.5rem] p-6 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-3xl rounded-full" />
+        
+        {/* 顶部控制栏 */}
+        <div className="flex items-center justify-between mb-8 relative z-10">
+          <div className="text-[10px] font-black text-zinc-500 flex items-center gap-2 tracking-widest">
+            <CalendarDays className="w-4 h-4 text-emerald-500" /> STATUS_GRID
+          </div>
+          <div className="flex items-center gap-2 bg-zinc-950/50 p-1 rounded-xl border border-zinc-800">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setCursor(subMonths(cursor, 1))}><ChevronLeft className="w-4" /></Button>
+            <span className="text-[10px] font-black italic text-zinc-300 min-w-[70px] text-center">{format(cursor, 'yyyy.MM')}</span>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setCursor(addMonths(cursor, 1))}><ChevronRight className="w-4" /></Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="h-8 text-xs font-black" onClick={() => setCursor(subMonths(cursor, 1))}>
-            上月
-          </Button>
-          <Button variant="outline" size="sm" className="h-8 text-xs font-black" onClick={() => setCursor(addMonths(cursor, 1))}>
-            下月
-          </Button>
-        </div>
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-lg font-black">{format(cursor, 'yyyy 年 M 月', { locale: zhCN })}</span>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border-2 border-amber-900 text-amber-950">
-          <Flame className="w-4 h-4" />
-          <span className="text-xs font-black">备赛压力指数 · {pressure}</span>
-        </div>
-      </div>
-      <p className="text-[11px] font-bold text-gray-500 leading-relaxed">
-        综合「距下一场关键考试的天数」与「近 14 日专注总时长」估算。考试节点含 CCF CSP-J/S 等示例日期，可按校历自行调整。
-      </p>
-      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-black text-gray-400 uppercase">
-        {['一', '二', '三', '四', '五', '六', '日'].map((d) => (
-          <div key={d}>{d}</div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-1">
-        {days.map((day) => {
-          const inMonth = isSameMonth(day, cursor);
-          const hit = EXAMS_2026.find((e) => format(e.date, 'yyyy-MM-dd') === format(day, 'yyyy-MM-dd'));
-          return (
-            <div
-              key={day.toISOString()}
-              className={`aspect-square rounded-lg border text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 ${
-                inMonth ? 'border-gray-900 bg-gray-50 text-gray-900' : 'border-gray-100 text-gray-300 bg-white'
-              } ${hit ? 'bg-rose-50 border-rose-700 text-rose-900' : ''}`}
-            >
-              <span>{format(day, 'd')}</span>
-              {hit && <span className="text-[8px] font-black leading-none text-center px-0.5">{hit.name}</span>}
+        
+        {/* 统计卡片 */}
+        <div className="grid grid-cols-2 gap-4 mb-8 relative z-10">
+          <div className="bg-zinc-950/50 p-4 rounded-2xl border border-zinc-800">
+            <div className="text-[8px] text-zinc-600 font-black uppercase mb-1">Pressure</div>
+            <div className="flex items-center gap-2">
+              <Flame className={`w-4 ${pressure > 70 ? 'text-orange-500 animate-pulse' : 'text-amber-500'}`} />
+              <span className="text-lg font-black text-white">{pressure}%</span>
             </div>
-          );
-        })}
+          </div>
+          <div className="bg-zinc-950/50 p-4 rounded-2xl border border-zinc-800">
+            <div className="text-[8px] text-zinc-600 font-black uppercase mb-1">14D Total</div>
+            <div className="flex items-center gap-2 text-emerald-400">
+              <Zap className="w-4" />
+              <span className="text-lg font-black">{focusMin14d}m</span>
+            </div>
+          </div>
+        </div>
+        
+        {/* 日历网格 */}
+        <div className="grid grid-cols-7 gap-1.5 relative z-10">
+          {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+            <div key={i} className="text-[8px] font-black text-zinc-700 text-center mb-1">{d}</div>
+          ))}
+          {days.map(day => {
+            const dStr = format(day, 'yyyy-MM-dd');
+            const data = dateMap[dStr];
+            
+            // 专注热力图背景色
+            let bgColor = 'bg-zinc-800/20 border-zinc-800/30';
+            if (data?.total > 0) bgColor = 'bg-emerald-950/30 border-emerald-900/40';
+            if (data?.total > 60) bgColor = 'bg-emerald-800/40 border-emerald-700/60';
+            if (data?.total > 150) bgColor = 'bg-emerald-500 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]';
+            
+            const isToday = dStr === format(new Date(), 'yyyy-MM-dd');
+            const hasDeadlines = data?.deadlines && data.deadlines.length > 0;
+
+            return (
+              <motion.div 
+                key={dStr} 
+                onClick={() => setSelectedDate(data || hasDeadlines ? dStr : null)} 
+                whileHover={{ scale: 1.1 }} 
+                className={`aspect-square rounded-lg flex flex-col items-center justify-center cursor-pointer border-2 relative transition-all ${bgColor} 
+                  ${isSameMonth(day, cursor) ? 'text-zinc-200' : 'text-zinc-800 opacity-20'} 
+                  ${isToday ? 'border-emerald-500 ring-2 ring-emerald-500/20' : ''}
+                  ${selectedDate === dStr ? 'ring-2 ring-fuchsia-500 border-fuchsia-500' : ''}`}
+              >
+                <span className="text-[9px] font-black">{format(day, 'd')}</span>
+                
+                {/* 🚨 核心：打卡紫色点 */}
+                {data?.log && <div className="absolute bottom-1 w-1 h-1 rounded-full bg-fuchsia-500 shadow-[0_0_5px_rgba(217,70,239,0.8)]" />}
+                
+                {/* 🚨 核心：DDL 红色角标 */}
+                {hasDeadlines && (
+                  <div className="absolute -top-1.5 -right-1.5 px-1 bg-red-600 text-white rounded-[4px] text-[6px] font-black uppercase shadow-lg border border-red-400 z-20 animate-bounce">
+                    DDL
+                  </div>
+                )}
+              </motion.div>
+            );
+          })}
+        </div>
       </div>
-      <div className="text-[10px] font-bold text-gray-400">
-        近 14 日专注累计：{focusMin} 分钟（来自 focus_sessions）
-      </div>
+
+      {/* 详情浮窗 */}
+      <AnimatePresence mode="wait">
+        {selectedDate && dateMap[selectedDate] && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }} 
+            animate={{ opacity: 1, y: 0 }} 
+            exit={{ opacity: 0, y: 10 }} 
+            className="bg-zinc-900 border-2 border-zinc-800 rounded-[2rem] p-6 space-y-4 shadow-2xl relative"
+          >
+            <button 
+              onClick={() => setSelectedDate(null)}
+              className="absolute top-4 right-4 text-zinc-600 hover:text-zinc-400 text-xs font-black"
+            >✕</button>
+            
+            <div className="flex justify-between border-b border-zinc-800 pb-3">
+              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{selectedDate} LOGS</span>
+              <span className="text-xs font-black text-emerald-500 italic">{dateMap[selectedDate].total}m Focus</span>
+            </div>
+
+            {/* 🚨 DDL 详情渲染 */}
+            {dateMap[selectedDate].deadlines.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Target className="w-3 h-3 text-red-500" />
+                  <span className="text-[10px] font-black text-red-500 uppercase">赛事截稿日</span>
+                </div>
+                {dateMap[selectedDate].deadlines.map((name, i) => (
+                  <div key={i} className="text-[11px] font-black text-red-100 bg-red-500/10 border border-red-500/20 p-2 rounded-xl flex items-center gap-2">
+                    <Trophy className="w-3 h-3 text-red-500" /> {name}
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {/* 专注任务详情 */}
+            {dateMap[selectedDate].titles.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Tasks</div>
+                {dateMap[selectedDate].titles.map((t, i) => (
+                  <div key={i} className="text-[11px] font-bold text-zinc-300 flex items-start gap-2">
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-1 shrink-0" />
+                    <span>{t}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 打卡日记详情 */}
+            {dateMap[selectedDate].log && (
+              <div className="pt-2 border-t border-zinc-800/50">
+                <div className="flex items-center gap-2 mb-2">
+                  <PenLine className="w-3 h-3 text-fuchsia-500" />
+                  <span className="text-[10px] font-black text-fuchsia-500 uppercase">Daily Summary</span>
+                </div>
+                <p className="text-[11px] font-bold text-zinc-400 leading-relaxed italic bg-zinc-950/50 p-3 rounded-xl border border-zinc-800">
+                  “{dateMap[selectedDate].log.summary}”
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

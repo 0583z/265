@@ -1,493 +1,276 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Trophy, 
-  User, 
-  Mail, 
-  MapPin, 
-  Award, 
-  Edit3, 
-  Save, 
-  X, 
-  Github, 
-  ExternalLink, 
-  GraduationCap, 
-  Sparkles,
-  Plus,
-  Trash2,
-  FileText,
-  Calendar
+  User, Mail, GraduationCap, Github, Edit3, Trophy, ExternalLink, 
+  Calendar, Sparkles, X, Plus, FileText, Bell, Clock, ShieldCheck, Send, Check 
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import {
-  fetchUserProfile,
-  upsertUserProfile,
-  fetchSubscriptionsWithCompetitions,
-  fetchUserGrowthState,
-  fetchTotalFocusMinutes,
-  type UserGrowthStateRow,
+import { 
+  fetchUserProfile, upsertUserProfile, fetchUserAwards, insertUserAward, 
+  submitHofApplication, fetchTotalFocusMinutes, type UserAwardRow 
 } from '../lib/supabaseClient';
-import { SkillTree } from './SkillTree';
-import { StickerBoard } from './StickerBoard';
 import { UserAvatar } from './UserAvatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-interface AwardEntry {
-  id: string;
-  competition_name: string;
-  award_level: string;
-  date: string;
-}
-
-interface ProfileData {
-  full_name: string;
-  major: string;
-  bio: string;
-  skills: string[];
-  github_url: string;
-}
-
-interface SubscriptionEntry {
-  id: string;
-  competition_id: string;
-  name: string;
-  deadline: string;
-  level: string;
-  category: string;
-}
+import * as Dialog from '@radix-ui/react-dialog';
 
 export const ProfileView: React.FC<{
+  competitions: any[];
+  subscribedIds: string[];
   onGeneratePortfolio: () => void;
-  onRequestAiCoach?: (prompt: string) => void;
   onOpenGeekCenter?: () => void;
-}> = ({ onGeneratePortfolio, onRequestAiCoach, onOpenGeekCenter }) => {
+}> = ({ competitions, subscribedIds, onGeneratePortfolio, onOpenGeekCenter }) => {
   const { user } = useAuth();
-  const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [growth, setGrowth] = useState<UserGrowthStateRow | null>(null);
-  const [totalFocusMin, setTotalFocusMin] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+  const [awards, setAwards] = useState<UserAwardRow[]>([]);
+  const [totalMin, setTotalMin] = useState(0);
   
-  const [profile, setProfile] = useState<ProfileData>({
-    full_name: '',
-    major: '',
-    bio: '',
-    skills: [],
-    github_url: ''
+  // 个人信息状态
+  const [profile, setProfile] = useState<any>({ 
+    full_name: '', 
+    major: '', 
+    bio: '', 
+    skills: [], 
+    github_url: '' 
   });
 
-  const [awards, setAwards] = useState<AwardEntry[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionEntry[]>([]);
-  const [newSkill, setNewSkill] = useState('');
+  // 弹窗状态
+  const [showAwardModal, setShowAwardModal] = useState(false);
+  const [showHofModal, setShowHofModal] = useState(false);
+  const [newAward, setNewAward] = useState({ name: '', level: '', date: '' });
+  const [hofReason, setHofReason] = useState('');
 
-  useEffect(() => {
-    const fetchProfileAll = async () => {
-      if (!user?.id) {
-        setLoading(false);
-        return;
-      }
+  const mySubscribedComps = competitions.filter(c => subscribedIds.includes(c.id));
 
-      try {
-        const [prof, subs, growthRow, totalMin] = await Promise.all([
-          fetchUserProfile(user.id),
-          fetchSubscriptionsWithCompetitions(user.id),
-          fetchUserGrowthState(user.id),
-          fetchTotalFocusMinutes(user.id),
-        ]);
-
-        setGrowth(growthRow);
-        setTotalFocusMin(totalMin);
-
-        if (prof) {
-          setProfile({
-            full_name: prof.nickname || user.username || '',
-            major: prof.major || '',
-            bio: prof.bio || '',
-            skills: Array.isArray(prof.skills) ? (prof.skills as string[]) : [],
-            github_url: prof.github_url || '',
-          });
-        } else {
-          setProfile((prev) => ({ ...prev, full_name: user.username || '' }));
-        }
-
-        setSubscriptions(
-          subs.map((s) => ({
-            id: s.id,
-            competition_id: s.competition_id,
-            name: s.name,
-            deadline: s.deadline,
-            level: s.level,
-            category: s.category,
-          })),
-        );
-        setAwards([]);
-      } catch (err: unknown) {
-        console.error('Error fetching profile data:', err);
-        const msg = err instanceof Error ? err.message : '未知错误';
-        toast.error('获取个人资料失败: ' + msg);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void fetchProfileAll();
-  }, [user?.id, user?.username]);
-
-  const handleSave = async () => {
+  const loadAll = async () => {
     if (!user?.id) return;
-    setSaving(true);
-
+    setLoading(true);
     try {
-      const existing = await fetchUserProfile(user.id);
+      const [prof, awardList, mins] = await Promise.all([
+        fetchUserProfile(user.id),
+        fetchUserAwards(user.id),
+        fetchTotalFocusMinutes(user.id)
+      ]);
+      if (prof) setProfile({ 
+        full_name: prof.nickname || user.username, 
+        major: prof.major || '', 
+        bio: prof.bio || '', 
+        skills: Array.isArray(prof.skills) ? prof.skills : [], 
+        github_url: prof.github_url || '' 
+      });
+      setAwards(awardList);
+      setTotalMin(mins);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadAll(); }, [user?.id]);
+
+  // 🚨 完善后的保存逻辑
+  const handleSaveProfile = async () => {
+    if (!user?.id) return;
+    try {
       await upsertUserProfile({
         id: user.id,
-        nickname: profile.full_name || null,
-        major: profile.major || null,
-        bio: profile.bio || null,
-        github_url: profile.github_url || null,
-        skills: profile.skills,
-        motto: existing?.motto ?? null,
-        avatar_url: existing?.avatar_url ?? null,
-        tech_tags: Array.isArray(existing?.tech_tags) ? (existing!.tech_tags as string[]) : [],
+        nickname: profile.full_name,
+        major: profile.major,
+        bio: profile.bio,
+        github_url: profile.github_url,
+        skills: profile.skills
       });
-
       setIsEditing(false);
-      toast.success('资料已更新 ✨');
-    } catch (err: unknown) {
-      console.error('Save error:', err);
-      toast.error('保存失败');
-    } finally {
-      setSaving(false);
+      toast.success('极客档案同步成功 ✨');
+    } catch (e) { 
+      toast.error('保存失败，请检查网络'); 
     }
   };
 
-  const addSkill = () => {
-    if (newSkill && !profile.skills.includes(newSkill)) {
-      setProfile({ ...profile, skills: [...profile.skills, newSkill] });
-      setNewSkill('');
-    }
+  const handleAddAward = async () => {
+    if (!newAward.name || !newAward.level) return toast.error('请填写完整信息');
+    try {
+      await insertUserAward({ user_id: user!.id, competition_name: newAward.name, award_level: newAward.level, award_date: newAward.date || new Date().toISOString().slice(0,10) });
+      toast.success('荣誉录入成功');
+      setShowAwardModal(false);
+      setNewAward({ name: '', level: '', date: '' });
+      loadAll();
+    } catch (e) { toast.error('录入失败'); }
   };
 
-  const removeSkill = (skill: string) => {
-    setProfile({ ...profile, skills: profile.skills.filter(s => s !== skill) });
+  const handleApplyHof = async () => {
+    if (hofReason.length < 10) return toast.error('申请理由请至少10个字');
+    try {
+      await submitHofApplication(user!.id, hofReason);
+      toast.success('申请已提交，请等待审核');
+      setShowHofModal(false);
+      setHofReason('');
+    } catch (e) { toast.error('提交失败'); }
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Loading Profile...</p>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="max-w-2xl mx-auto py-20 bg-white rounded-[40px] border border-gray-100 shadow-sm text-center px-8">
-        <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
-          <User className="w-10 h-10 text-blue-600" />
-        </div>
-        <h2 className="text-2xl font-black text-gray-900 mb-2">欢迎来到极客档案</h2>
-        <p className="text-gray-400 font-medium mb-8">请先登录，开启你的竞赛作品集之旅</p>
-        <div className="flex justify-center">
-          <div className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-xl shadow-blue-100 italic">
-            请点击右上角登录/注册 🚀
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="py-20 text-center font-black text-gray-400 italic">LOADING GEEK_DOSSIER...</div>;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-700">
-      {/* Header Profile Card */}
-      <div className="relative bg-white rounded-[40px] p-8 sm:p-12 shadow-2xl shadow-blue-500/5 border border-gray-100 overflow-hidden">
-        {/* Background Gradients */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-full blur-3xl -mr-32 -mt-32 opacity-50"></div>
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-50 rounded-full blur-3xl -ml-24 -mb-24 opacity-50"></div>
+    <div className="max-w-4xl mx-auto space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700">
+      
+      {/* 1. 顶部档案卡片 (修复与完善编辑功能) */}
+      <div className="bg-white rounded-[40px] p-8 sm:p-12 shadow-sm border border-gray-100 flex flex-col md:flex-row items-center gap-10 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-blue-50 rounded-full blur-3xl opacity-40"></div>
         
-        <div className="relative flex flex-col md:flex-row items-start md:items-center gap-8">
-          <div className="relative group">
-            <UserAvatar 
-              name={profile.full_name || user?.username || 'G'} 
-              size="xl"
-            />
-            {isEditing && (
-              <div className="absolute inset-0 bg-black/40 rounded-[32px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
-                <Edit3 className="w-6 h-6 text-white" />
-              </div>
-            )}
+        <UserAvatar name={profile.full_name} size="xl" />
+        
+        <div className="flex-1 space-y-6 relative z-10 text-center md:text-left">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex-1 w-full">
+              {isEditing ? (
+                <input 
+                  autoFocus
+                  value={profile.full_name}
+                  onChange={e => setProfile({...profile, full_name: e.target.value})}
+                  className="text-4xl font-black text-gray-900 bg-blue-50/50 border-b-2 border-blue-500 outline-none w-full italic tracking-tight px-2 rounded-t-lg"
+                  placeholder="输入你的极客代号..."
+                />
+              ) : (
+                <h1 className="text-4xl font-black text-gray-900 italic tracking-tight">
+                  {profile.full_name || '匿名极客'}
+                </h1>
+              )}
+              <p className="text-sm font-bold text-gray-400 mt-2 flex items-center justify-center md:justify-start gap-2">
+                <Mail className="w-3.5 h-3.5 text-blue-500" /> {user?.email}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              {isEditing ? (
+                <>
+                  <Button 
+                    onClick={() => setIsEditing(false)} 
+                    variant="outline"
+                    className="rounded-2xl h-12 px-4 border-gray-200 text-gray-400 font-bold"
+                  >
+                    取消
+                  </Button>
+                  <Button 
+                    onClick={handleSaveProfile} 
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl h-12 w-12 flex items-center justify-center shadow-lg shadow-emerald-100"
+                  >
+                    <Check className="w-6 h-6" />
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button 
+                    onClick={() => setShowHofModal(true)} 
+                    className="bg-amber-500 text-white rounded-2xl h-12 px-6 font-black shadow-lg shadow-amber-100 transition-all active:scale-95"
+                  >
+                    <ShieldCheck className="w-4 h-4 mr-2" /> 申请卷王榜
+                  </Button>
+                  <Button 
+                    onClick={() => setIsEditing(true)} 
+                    className="bg-zinc-950 text-white rounded-2xl h-12 w-12 flex items-center justify-center shadow-xl hover:bg-black transition-colors"
+                  >
+                    <Edit3 className="w-5 h-5" />
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
 
-          <div className="flex-1 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                {isEditing ? (
-                  <Input 
-                    value={profile.full_name} 
-                    onChange={e => setProfile({...profile, full_name: e.target.value})}
-                    placeholder="你的极客真名"
-                    className="text-2xl font-black h-12 bg-gray-50 border-none px-4 rounded-xl focus-visible:ring-blue-600/20"
-                  />
-                ) : (
-                  <h1 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight italic">
-                    {profile.full_name || user?.username}
-                  </h1>
-                )}
-                <div className="flex items-center gap-3 mt-2 text-gray-400 font-bold text-sm tracking-wide uppercase">
-                  <Mail className="w-4 h-4 text-blue-500" />
-                  {user?.email}
-                </div>
-              </div>
-
-              <div className="hidden sm:flex gap-2">
-                {isEditing ? (
-                  <>
-                    <Button 
-                      variant="outline" 
-                      onClick={() => setIsEditing(false)}
-                      className="rounded-xl px-4 font-bold border-gray-200"
-                    >
-                      取消
-                    </Button>
-                    <Button 
-                      disabled={saving}
-                      onClick={handleSave}
-                      className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-6 font-black shadow-lg shadow-blue-200"
-                    >
-                      {saving ? '保存中...' : '保存修改'}
-                    </Button>
-                  </>
-                ) : (
-                  <Button 
-                    onClick={() => setIsEditing(true)}
-                    className="bg-gray-900 hover:bg-black text-white rounded-xl px-6 font-black flex items-center gap-2 shadow-xl shadow-gray-200"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                    修改档案
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-4 text-sm font-bold text-gray-500">
-              <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
-                <GraduationCap className="w-4 h-4 text-indigo-500" />
-                {isEditing ? (
-                  <input 
-                    value={profile.major} 
-                    onChange={e => setProfile({...profile, major: e.target.value})}
-                    placeholder="填入你的专业"
-                    className="bg-transparent border-none outline-none focus:ring-0 w-32"
-                  />
-                ) : (
-                  profile.major || '未填专业'
-                )}
-              </div>
-              <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
-                <Github className="w-4 h-4 text-gray-900" />
-                {isEditing ? (
-                  <input 
-                    value={profile.github_url} 
-                    onChange={e => setProfile({...profile, github_url: e.target.value})}
-                    placeholder="Github 主页链接"
-                    className="bg-transparent border-none outline-none focus:ring-0 w-32"
-                  />
-                ) : (
-                  profile.github_url ? 'GitHub 已关联' : '未关联 GitHub'
-                )}
-              </div>
-            </div>
+          <div className="flex flex-wrap gap-4 justify-center md:justify-start">
+             <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100 text-sm font-bold text-blue-600 flex items-center gap-2 min-w-[120px]">
+               <GraduationCap className="w-4 h-4" /> 
+               {isEditing ? (
+                 <input 
+                   value={profile.major}
+                   onChange={e => setProfile({...profile, major: e.target.value})}
+                   className="bg-transparent border-none outline-none w-full placeholder:text-blue-300"
+                   placeholder="填写专业..."
+                 />
+               ) : (
+                 profile.major || '未填专业'
+               )}
+             </div>
+             <div className="bg-zinc-50 px-4 py-2 rounded-xl border border-zinc-100 text-sm font-bold text-zinc-500 flex items-center gap-2">
+               <FileText className="w-4 h-4" /> 专注时长: {totalMin}m
+             </div>
           </div>
         </div>
+      </div>
 
-        {/* Bio Section */}
-        <div className="mt-10 pt-10 border-t border-gray-50">
-          <div className="flex items-center gap-2 text-xs font-black text-gray-400 uppercase tracking-[0.2em] mb-4">
-            <User className="w-3 h-3" />
-            个人简介 / BIO
-          </div>
-          {isEditing ? (
-            <textarea 
-              value={profile.bio}
-              onChange={e => setProfile({...profile, bio: e.target.value})}
-              placeholder="介绍一下你的极客背景和竞赛热情..."
-              className="w-full h-24 p-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-blue-600/10 text-gray-700 font-medium resize-none"
-            />
+      {/* 2. 荣誉实绩 */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3"><Trophy className="w-7 h-7 text-yellow-500" /> 实战成果与荣誉</h2>
+          <Button onClick={() => setShowAwardModal(true)} className="bg-blue-600 text-white rounded-2xl font-bold px-6 h-11 flex items-center gap-2 shadow-lg shadow-blue-100"><Plus className="w-5 h-5" /> 录入新成就</Button>
+        </div>
+        <div className="grid grid-cols-1 gap-4">
+          {awards.length === 0 ? (
+            <div className="bg-white border-2 border-dashed border-gray-100 rounded-[32px] p-16 text-center"><p className="text-gray-400 font-bold italic">暂无正式记录。点击上方按钮开始录入！</p></div>
           ) : (
-            <p className="text-gray-600 text-lg font-medium leading-relaxed max-w-2xl">
-              {profile.bio || '这位极客还没留下任何介绍。是在默默钻研算法吗？🧪'}
-            </p>
+            awards.map((award, idx) => (
+              <div key={idx} className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex items-center gap-6 group hover:border-blue-300 transition-all">
+                <div className="w-14 h-14 bg-yellow-50 rounded-2xl flex items-center justify-center"><Trophy className="w-7 h-7 text-yellow-600" /></div>
+                <div className="flex-1"><h3 className="font-black text-gray-900 text-lg">{award.competition_name}</h3><div className="flex items-center gap-4 mt-1"><span className="text-xs font-black text-yellow-600 bg-yellow-50 px-3 py-1 rounded-full uppercase">{award.award_level}</span><span className="text-xs font-bold text-gray-400 flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> {award.award_date}</span></div></div>
+              </div>
+            ))
           )}
         </div>
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-2">
-        <SkillTree userId={user.id} growth={growth} />
-        <StickerBoard
-          userId={user.id}
-          unlockedIds={[
-            ...(totalFocusMin >= 600 ? ['focus_600'] : []),
-            ...(subscriptions.some((s) => /csp|ccf|计算机软件能力/i.test(s.name)) ? ['csp_sub'] : []),
-          ]}
-          initialLayout={growth?.sticker_layout}
-        />
-      </div>
-
-      <section className="rounded-[32px] border-2 border-gray-900 bg-gradient-to-br from-violet-50 via-white to-emerald-50/40 p-8 shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
-        <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
-          <Sparkles className="w-6 h-6 text-violet-600" />
-          极客中心 · 深度工作台
-        </h2>
-        <p className="mt-2 text-sm font-bold text-gray-500 max-w-xl leading-relaxed">
-          番茄钟、拼贴风联动日历、由专注分类聚合的能力雷达、user_profiles 档案与打卡已集中在顶部导航「极客中心」。
-        </p>
-        <Button
-          type="button"
-          onClick={() => onOpenGeekCenter?.()}
-          className="mt-6 h-12 rounded-2xl bg-gray-900 px-8 font-black text-white shadow-lg hover:bg-black"
-        >
-          前往极客中心
-        </Button>
-      </section>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Awards & Honors */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-black text-gray-900 flex items-center gap-3">
-              <Trophy className="w-6 h-6 text-yellow-500" />
-              荣誉与获奖记录
-            </h2>
-            <Button variant="outline" className="rounded-xl border-gray-200 text-xs font-bold text-gray-500 uppercase tracking-widest px-3">
-              管理记录
-            </Button>
-          </div>
-
-          <div className="space-y-4">
-            {awards.length === 0 ? (
-              <div className="bg-white border-2 border-dashed border-gray-100 rounded-[32px] p-12 text-center">
-                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Award className="w-8 h-8 text-gray-200" />
-                </div>
-                <p className="text-gray-400 font-bold mb-4 italic">暂无荣誉记录，开启你的第一场比赛吧！</p>
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-6 font-bold">
-                  添加荣誉
-                </Button>
+      {/* 3. 正在备赛 */}
+      <div className="space-y-6">
+        <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3"><Sparkles className="w-7 h-7 text-blue-500" /> 正在备赛 / 订阅赛事</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {mySubscribedComps.length === 0 ? (
+            <div className="col-span-full bg-blue-50/30 border-2 border-dashed border-blue-100 rounded-[32px] p-10 text-center text-blue-500 font-bold">还没有订阅任何赛事。</div>
+          ) : (
+            mySubscribedComps.map(comp => (
+              <div key={comp.id} className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex flex-col gap-4 group hover:shadow-md transition-all">
+                <div className="flex justify-between items-start"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full uppercase">{comp.level}</span><Bell className="w-4 h-4 text-blue-500" /></div>
+                <h4 className="font-black text-gray-900 text-md line-clamp-2">{comp.name}</h4>
+                <div className="text-[11px] font-bold text-gray-400 bg-gray-50 px-2.5 py-1 rounded-lg flex items-center gap-2 w-fit"><Clock className="w-3.5 h-3.5 text-rose-500" /> 截止：{comp.deadline?.split('T')[0]}</div>
               </div>
-            ) : (
-              awards.map((award) => (
-                <div key={award.id} className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex items-center gap-6 group hover:shadow-lg hover:shadow-blue-500/5 transition-all">
-                  <div className="w-14 h-14 bg-yellow-50 rounded-2xl flex items-center justify-center shrink-0">
-                    <Trophy className="w-7 h-7 text-yellow-500" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-black text-gray-900">{award.competition_name}</h3>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-xs font-black text-yellow-600 bg-yellow-50 px-2.5 py-1 rounded-full uppercase tracking-tighter">
-                        {award.award_level}
-                      </span>
-                      <span className="text-xs font-bold text-gray-400">{award.date}</span>
-                    </div>
-                  </div>
-                  <ExternalLink className="w-5 h-5 text-gray-300 group-hover:text-blue-500 transition-colors" />
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Subscriptions Section */}
-          <div className="pt-8">
-            <h2 className="text-xl font-black text-gray-900 flex items-center gap-3 mb-6">
-              <Sparkles className="w-6 h-6 text-blue-500" />
-              正在备赛 / 订阅赛事
-            </h2>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {subscriptions.length === 0 ? (
-                <div className="col-span-full bg-blue-50/50 border-2 border-dashed border-blue-100 rounded-[32px] p-8 text-center text-blue-500 font-bold italic text-sm">
-                  还没有订阅任何赛事。在首页发现并订阅感兴趣的比赛吧！
-                </div>
-              ) : (
-                subscriptions.map(sub => (
-                  <div key={sub.id} className="bg-white p-5 rounded-[28px] border border-gray-100 shadow-sm flex flex-col gap-3 group hover:border-blue-200 transition-all">
-                    <div className="flex justify-between items-start">
-                      <div className="flex gap-2">
-                        <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full uppercase">{sub.level}</span>
-                        <span className="text-[10px] font-black text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full uppercase">{sub.category}</span>
-                      </div>
-                      <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
-                    </div>
-                    <h4 className="font-black text-gray-900 text-sm line-clamp-1">{sub.name}</h4>
-                    <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400">
-                      <Calendar className="w-3.5 h-3.5" />
-                      截止：{sub.deadline ? sub.deadline.split('T')[0] : '未知'}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Skills Bento */}
-        <div className="space-y-6">
-           <h2 className="text-xl font-black text-gray-900 flex items-center gap-3">
-            <Sparkles className="w-6 h-6 text-purple-500" />
-            核心技能
-          </h2>
-          <div className="bg-white p-6 rounded-[40px] border border-gray-100 shadow-sm space-y-6">
-            <div className="flex flex-wrap gap-2">
-              {profile.skills.map(skill => (
-                <div 
-                  key={skill} 
-                  className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 group"
-                >
-                  {skill}
-                  {isEditing && (
-                    <button onClick={() => removeSkill(skill)} className="text-indigo-300 hover:text-indigo-600">
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              {profile.skills.length === 0 && <p className="text-xs font-bold text-gray-300 italic px-2">尚未添加技能...</p>}
-            </div>
-
-            {isEditing && (
-              <div className="flex gap-2">
-                <input 
-                  value={newSkill}
-                  onChange={e => setNewSkill(e.target.value)}
-                  onKeyPress={e => e.key === 'Enter' && addSkill()}
-                  placeholder="添加技能..."
-                  className="flex-1 h-10 px-4 bg-gray-50 border-none rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-600/10"
-                />
-                <button 
-                  onClick={addSkill}
-                  className="w-10 h-10 bg-gray-900 text-white rounded-xl flex items-center justify-center shadow-lg shadow-gray-200 active:scale-95 transition-transform"
-                >
-                  <Plus className="w-5 h-5" />
-                </button>
-              </div>
-            )}
-
-            <div className="pt-6 border-t border-gray-50">
-              <Button 
-                onClick={onGeneratePortfolio}
-                className="w-full h-14 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-[24px] font-black text-sm uppercase tracking-widest flex items-center gap-3 shadow-xl shadow-blue-200 hover:scale-[1.02] transition-transform active:scale-[0.98]"
-              >
-                <FileText className="w-5 h-5" />
-                生成作品集
-              </Button>
-              <p className="text-[10px] text-center text-gray-400 font-bold mt-4 uppercase tracking-[0.2em]">
-                One-Click Portfolio Generator
-              </p>
-            </div>
-          </div>
+            ))
+          )}
         </div>
       </div>
+
+      {/* 4. 底部操作 */}
+      <div className="bg-zinc-950 rounded-[40px] p-10 text-white flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden">
+        <div className="space-y-2 relative z-10"><h2 className="text-2xl font-black italic uppercase tracking-tighter">导出极客能力档案</h2><p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Digital Competency Dossier v4.0</p></div>
+        <div className="flex gap-4 relative z-10 w-full md:w-auto">
+          <Button onClick={onOpenGeekCenter} className="flex-1 md:flex-none bg-zinc-800 hover:bg-zinc-700 text-white rounded-2xl h-14 px-8 font-black">前往极客中心</Button>
+          <Button onClick={onGeneratePortfolio} className="flex-1 md:flex-none bg-blue-600 hover:bg-blue-500 text-white rounded-2xl h-14 px-10 font-black shadow-xl flex items-center gap-3"><FileText className="w-5 h-5" /> 立即生成档案</Button>
+        </div>
+      </div>
+
+      {/* --- 📦 弹窗区 --- */}
+      <Dialog.Root open={showAwardModal} onOpenChange={setShowAwardModal}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100]" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-md bg-white rounded-[32px] p-10 shadow-2xl z-[101] animate-in zoom-in-95">
+            <Dialog.Title className="text-2xl font-black mb-6 flex items-center gap-3"><Trophy className="text-yellow-500 w-8 h-8" /> 录入成就</Dialog.Title>
+            <div className="space-y-4">
+              <Input value={newAward.name} onChange={e => setNewAward({...newAward, name: e.target.value})} placeholder="赛事全称" className="h-14 rounded-2xl border-2" />
+              <Input value={newAward.level} onChange={e => setNewAward({...newAward, level: e.target.value})} placeholder="获奖等级" className="h-14 rounded-2xl border-2" />
+              <Input type="date" value={newAward.date} onChange={e => setNewAward({...newAward, date: e.target.value})} className="h-14 rounded-2xl border-2" />
+              <Button onClick={handleAddAward} className="w-full h-16 bg-blue-600 text-white font-black rounded-2xl mt-4">确认存入</Button>
+            </div>
+            <Dialog.Close className="absolute top-6 right-6 p-2 text-gray-300 hover:text-gray-900"><X /></Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={showHofModal} onOpenChange={setShowHofModal}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100]" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-md bg-white rounded-[32px] p-10 shadow-2xl z-[101]">
+            <Dialog.Title className="text-2xl font-black mb-4 flex items-center gap-3 text-amber-600"><ShieldCheck /> 申请卷王榜</Dialog.Title>
+            <textarea value={hofReason} onChange={e => setHofReason(e.target.value)} placeholder="写下你的申请理由..." className="w-full h-40 p-5 bg-gray-50 rounded-[24px] border-2 outline-none font-medium mb-4" />
+            <Button onClick={handleApplyHof} className="w-full h-16 bg-amber-50 text-white font-black rounded-2xl flex items-center justify-center gap-3"><Send className="w-5 h-5" /> 提交申请</Button>
+            <Dialog.Close className="absolute top-6 right-6 p-2 text-gray-300 hover:text-gray-900"><X /></Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
     </div>
   );
 };

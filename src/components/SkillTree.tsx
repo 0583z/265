@@ -1,152 +1,66 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { fetchRecentFocusSessions, type FocusSessionRow, type UserGrowthStateRow } from '@/src/lib/supabaseClient';
-import { categoryToSkillDimension, type SkillDimension } from '@/src/lib/focusBuckets';
+import React, { useMemo } from 'react';
+import { motion } from 'framer-motion';
+import { Trophy, Code, PenTool, Network } from 'lucide-react';
+import { type FocusSessionRow } from '../lib/supabaseClient';
 
-const NODES: { id: SkillDimension; label: string; cx: number; cy: number }[] = [
-  { id: 'algorithm', label: '算法', cx: 120, cy: 48 },
-  { id: 'dev', label: '开发', cx: 220, cy: 140 },
-  { id: 'ui', label: '设计', cx: 40, cy: 140 },
-  { id: 'arch', label: '工程化', cx: 120, cy: 220 },
+interface SkillTreeProps {
+  focusSessions?: FocusSessionRow[];
+  streakDays?: number;
+  userId?: string; 
+  growth?: any;
+}
+
+const SKILL_NODES = [
+  { id: 'dev', label: '基础开发', icon: Code, x: 50, y: 80, category: '开发', maxExp: 500 },
+  { id: 'uiux', label: 'UI/UX', icon: PenTool, x: 20, y: 40, category: 'UI', maxExp: 300 },
+  { id: 'algo', label: '算法逻辑', icon: Trophy, x: 80, y: 40, category: '算法', maxExp: 600 },
+  { id: 'arch', label: '系统架构', icon: Network, x: 50, y: 10, category: '架构', maxExp: 800 },
 ];
 
-function expFor(dim: SkillDimension, g: UserGrowthStateRow | null): number {
-  if (!g) return 0;
-  switch (dim) {
-    case 'algorithm':
-      return Number(g.exp_algorithm) || 0;
-    case 'dev':
-      return Number(g.exp_dev) || 0;
-    case 'ui':
-      return Number(g.exp_ui) || 0;
-    default:
-      return Number(g.exp_arch) || 0;
-  }
-}
+const SKILL_PATHS = [{s:'dev',t:'uiux'}, {s:'dev',t:'algo'}, {s:'algo',t:'arch'}, {s:'uiux',t:'arch'}];
 
-/** 0–1 发光强度 */
-function glow01(exp: number): number {
-  const cap = 5000;
-  return Math.min(1, exp / cap);
-}
-
-export const SkillTree: React.FC<{ userId: string; growth: UserGrowthStateRow | null }> = ({ userId, growth }) => {
-  const [open, setOpen] = useState(false);
-  const [dim, setDim] = useState<SkillDimension | null>(null);
-  const [rows, setRows] = useState<FocusSessionRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!userId) return;
-      setLoading(true);
-      try {
-        const all = await fetchRecentFocusSessions(userId, 365);
-        if (!cancelled) setRows(all);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId]);
-
-  const filtered = useMemo(() => {
-    if (!dim) return [];
-    return rows.filter((r) => categoryToSkillDimension(r.category || '') === dim);
-  }, [rows, dim]);
-
-  const openDim = (d: SkillDimension) => {
-    setDim(d);
-    setOpen(true);
-  };
+export const SkillTree: React.FC<SkillTreeProps> = ({ focusSessions = [], streakDays = 1 }) => {
+  const expData = useMemo(() => {
+    const map: Record<string, number> = { 开发: 0, UI: 0, 算法: 0, 架构: 0, 综合: 0 };
+    focusSessions.forEach(s => {
+      const earned = Math.round((s.duration_minutes || 0) * 1.2 * (1 + 0.1 * streakDays));
+      const cat = s.category || '综合';
+      if (map[cat] !== undefined) map[cat] += earned;
+    });
+    return map;
+  }, [focusSessions, streakDays]);
 
   return (
-    <section className="rounded-[32px] border-2 border-gray-900 bg-gradient-to-br from-zinc-950 via-zinc-900 to-emerald-950/40 p-8 text-white shadow-[10px_10px_0_0_rgba(0,0,0,1)]">
-      <div className="mb-4 text-xs font-black uppercase tracking-[0.25em] text-emerald-400">技能树 · EXP 成长模型</div>
-      <p className="mb-6 text-sm font-bold text-zinc-400">
-        单次专注经验{' '}
-        <span className="font-mono text-emerald-300">E = t × w × (1 + 0.1 × streak)</span>，节点亮度随维度 EXP 提升。
-      </p>
-      <svg viewBox="0 0 260 260" className="mx-auto h-64 w-full max-w-sm">
-        <defs>
-          <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-            <feGaussianBlur stdDeviation="6" result="b" />
-            <feMerge>
-              <feMergeNode in="b" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-        <line x1="120" y1="48" x2="40" y2="140" stroke="#3f3f46" strokeWidth="3" />
-        <line x1="120" y1="48" x2="220" y2="140" stroke="#3f3f46" strokeWidth="3" />
-        <line x1="40" y1="140" x2="120" y2="220" stroke="#3f3f46" strokeWidth="3" />
-        <line x1="220" y1="140" x2="120" y2="220" stroke="#3f3f46" strokeWidth="3" />
-        {NODES.map((n) => {
-          const e = expFor(n.id, growth);
-          const g = glow01(e);
-          const fill = `rgba(${34 + (1 - g) * 120}, ${197 - (1 - g) * 40}, ${94 + (1 - g) * 60}, ${0.35 + g * 0.65})`;
-          const stroke = g > 0.35 ? '#4ade80' : '#52525b';
+    <div className="relative w-full h-full min-h-[360px] flex items-center justify-center overflow-hidden">
+      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100">
+        {SKILL_PATHS.map((p, i) => {
+          const s = SKILL_NODES.find(n => n.id === p.s)!;
+          const t = SKILL_NODES.find(n => n.id === p.t)!;
+          const active = expData[s.category] > 20 && expData[t.category] > 20;
           return (
-            <g key={n.id} className="cursor-pointer" onClick={() => openDim(n.id)} style={{ filter: g > 0.2 ? 'url(#glow)' : undefined }}>
-              <circle cx={n.cx} cy={n.cy} r="36" fill={fill} stroke={stroke} strokeWidth="3" />
-              <text x={n.cx} y={n.cy - 6} textAnchor="middle" className="fill-white text-[11px] font-black">
-                {n.label}
-              </text>
-              <text x={n.cx} y={n.cy + 12} textAnchor="middle" className="fill-zinc-200 text-[9px] font-mono font-bold">
-                {Math.round(e)} EXP
-              </text>
-            </g>
+            <motion.line key={i} x1={`${s.x}%`} y1={`${s.y}%`} x2={`${t.x}%`} y2={`${t.y}%`}
+              stroke={active ? '#10B981' : '#3F3F46'} strokeWidth={active ? 2 : 1}
+              initial={{ pathLength: 0 }} animate={{ pathLength: 1 }}
+            />
           );
         })}
       </svg>
-
-      <Dialog.Root open={open} onOpenChange={setOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/40 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[71] max-h-[80vh] w-[min(94vw,480px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-3xl border-2 border-gray-900 bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-2">
-              <Dialog.Title className="text-lg font-black text-gray-900">
-                {dim === 'algorithm' && '算法 · 历史专注'}
-                {dim === 'dev' && '开发 · 历史专注'}
-                {dim === 'ui' && '设计 · 历史专注'}
-                {dim === 'arch' && '工程化 · 历史专注'}
-              </Dialog.Title>
-              <Dialog.Close asChild>
-                <button type="button" className="rounded-lg p-1 hover:bg-gray-100" aria-label="关闭">
-                  <X className="h-5 w-5" />
-                </button>
-              </Dialog.Close>
+      {SKILL_NODES.map((node) => {
+        const exp = expData[node.category] || 0;
+        const progress = Math.min((exp / node.maxExp) * 100, 100);
+        return (
+          <div key={node.id} className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: `${node.x}%`, top: `${node.y}%` }}>
+            <div className={`w-11 h-11 rounded-2xl border-2 flex items-center justify-center bg-zinc-900 z-10 transition-all ${exp > 0 ? 'border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)]' : 'border-zinc-800'}`}>
+              <node.icon className={`w-5 h-5 ${exp > 0 ? 'text-emerald-400' : 'text-zinc-700'}`} />
+              <svg className="absolute -inset-2 w-15 h-15 -rotate-90">
+                <circle cx="30" cy="30" r="26" fill="none" stroke="#10B981" strokeWidth="2" strokeDasharray="163" strokeDashoffset={163 - (163 * progress) / 100} className="transition-all duration-1000" />
+              </svg>
             </div>
-            <p className="mt-2 text-xs font-bold text-gray-500">按专注分类归入本维度，展示近一年记录。</p>
-            <div className="mt-4 space-y-2">
-              {loading ? (
-                <p className="text-sm font-bold text-gray-400">加载中…</p>
-              ) : filtered.length === 0 ? (
-                <p className="text-sm font-bold text-gray-400">暂无该维度专注记录，去极客中心开一局番茄吧。</p>
-              ) : (
-                filtered.slice(0, 40).map((f) => (
-                  <div key={f.id || `${f.session_date}-${f.session_title}`} className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-xs font-bold text-gray-800">
-                    <div className="text-blue-600">{f.session_title || f.note || '未命名'}</div>
-                    <div className="mt-1 text-gray-500">
-                      {f.session_date} · {f.duration_minutes} min · {f.category}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="mt-6 flex justify-end">
-              <Button type="button" variant="outline" className="rounded-xl font-black" onClick={() => setOpen(false)}>
-                关闭
-              </Button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </section>
+            <span className="mt-5 text-[9px] font-black text-white italic tracking-tighter">{node.label}</span>
+            <span className="text-[8px] text-zinc-600 font-bold">{exp} EXP</span>
+          </div>
+        );
+      })}
+    </div>
   );
 };
