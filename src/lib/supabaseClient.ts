@@ -36,6 +36,16 @@ export type UserAwardRow = {
   award_date: string;
 };
 
+// 🚨 补齐：修复 CompetencyRadar 雷达图的类型报错
+export type UserSkillRow = {
+  id?: string;
+  user_id: string;
+  skill_name: string;
+  skill_score: number;
+  weight?: number;
+  created_at?: string;
+};
+
 export type UserProfileRow = {
   id: string;
   nickname: string | null;
@@ -104,7 +114,6 @@ export async function inviteTalentToTeam(payload: { team_id: string; invitee_id:
   if (error) throw error;
 }
 
-// 🚨 强化类型：确保 TeamupHub.tsx 里的 setTalents 不再报类型不匹配错
 export async function fetchTalentPool(): Promise<UserProfileRow[]> {
   const { data, error } = await supabaseClient
     .from('user_profiles')
@@ -156,9 +165,23 @@ export async function upsertUserProfile(row: any) {
   await supabaseClient.from('user_profiles').upsert(row, { onConflict: 'id' });
 }
 
-export async function fetchUserSkills(userId: string) {
-  const { data } = await supabaseClient.from('user_profiles').select('skills').eq('id', userId).maybeSingle();
-  return data?.skills || [];
+// 🚨 修复：雷达图查询应指向 user_skills 表，并且返回 UserSkillRow[]
+export async function fetchUserSkills(userId: string): Promise<UserSkillRow[]> {
+  const { data, error } = await supabaseClient
+    .from('user_skills')
+    .select('*')
+    .eq('user_id', userId);
+  if (error) return [];
+  return (data || []) as UserSkillRow[];
+}
+
+// 🚨 补齐：修复雷达图点击“固化画像”时的写入报错
+export async function upsertUserSkill(userId: string, row: { skill_name: string, skill_score: number, weight?: number }) {
+  const { error } = await supabaseClient.from('user_skills').upsert(
+    { user_id: userId, ...row },
+    { onConflict: 'user_id,skill_name' }
+  );
+  if (error) throw error;
 }
 
 export async function searchAiMemoriesRag(userId: string, query: string) {

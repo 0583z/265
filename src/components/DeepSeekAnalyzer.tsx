@@ -1,41 +1,76 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BrainCircuit, Send, Loader2, AlertCircle, Terminal, Zap, RefreshCcw, CheckCircle2 } from 'lucide-react';
+import { BrainCircuit, Send, Loader2, Terminal, User, BookmarkPlus, CheckCircle2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
+const MODE_OPTIONS = [
+  { label: '赛事建议', value: 'suggest' },
+  { label: '技术执行', value: 'execute' },
+  { label: '备赛计划', value: 'plan' }
+] as const;
+
+// 定义聊天消息的结构
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'ai';
+  content: string;
+  modeLabel?: string;
+  isStreaming?: boolean;
+  saved?: boolean; // 是否已收藏
+}
+
 export const DeepSeekAnalyzer: React.FC = () => {
+  const [messages, setMessages] = useState<ChatMessage[]>([{
+    id: 'welcome',
+    role: 'ai',
+    content: '你好，极客！我是你的专属 AI 备赛导师。你可以把冗长的比赛通知发给我，或者直接向我提问关于比赛、技术栈和学习计划的任何问题。',
+    modeLabel: '系统提示'
+  }]);
   const [input, setInput] = useState('');
-  const [result, setResult] = useState('');
   const [loading, setLoading] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'suggest' | 'execute' | 'plan'>('suggest');
+  
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // 自动滚动到最新消息
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [result]);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
-  const handleAnalyze = async () => {
-    if (!input.trim()) return toast.error('请输入分析内容');
+  const handleSend = async () => {
+    if (!input.trim()) return toast.error('请输入内容');
 
+    const userMsgId = Date.now().toString();
+    const currentInput = input;
+    const currentModeLabel = MODE_OPTIONS.find(m => m.value === mode)?.label;
+    
+    // 1. 插入用户消息
+    setMessages(prev => [...prev, { id: userMsgId, role: 'user', content: currentInput }]);
+    setInput('');
     setLoading(true);
-    setHasStarted(true);
-    setResult('');
-    setError(null);
+
+    const aiMsgId = (Date.now() + 1).toString();
+    
+    // 2. 预先插入空的 AI 消息准备接收流
+    setMessages(prev => [...prev, { 
+      id: aiMsgId, 
+      role: 'ai', 
+      content: '', 
+      modeLabel: currentModeLabel, 
+      isStreaming: true 
+    }]);
 
     try {
       const response = await fetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'analyze', content: input, intent: mode }),
+        body: JSON.stringify({ mode: 'analyze', content: currentInput, intent: mode }),
       });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `后端请求失败 (${response.status})`);
-      }
+      if (!response.ok) throw new Error('后端请求失败');
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -59,8 +94,12 @@ export const DeepSeekAnalyzer: React.FC = () => {
           
           try {
             const data = JSON.parse(jsonStr);
-            const content = data.choices?.[0]?.delta?.content || '';
-            setResult(prev => prev + content);
+            const chunk = data.choices?.[0]?.delta?.content || '';
+            
+            // 实时更新当前 AI 消息的内容
+            setMessages(prev => prev.map(msg => 
+              msg.id === aiMsgId ? { ...msg, content: msg.content + chunk } : msg
+            ));
           } catch (e) {
             // 忽略碎片数据
           }
@@ -68,102 +107,170 @@ export const DeepSeekAnalyzer: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Frontend Error:', err);
-      setError(err.message);
-      toast.error('AI 链路中断');
+      toast.error('AI 链路中断，请重试');
+      setMessages(prev => prev.map(msg => 
+        msg.id === aiMsgId ? { ...msg, content: msg.content + '\n\n[网络请求中断，请稍后重试...]' } : msg
+      ));
     } finally {
+      setMessages(prev => prev.map(msg => 
+        msg.id === aiMsgId ? { ...msg, isStreaming: false } : msg
+      ));
       setLoading(false);
     }
   };
 
+  // 🚨 核心改造：针对单条气泡的收藏打钩功能
+  const handleSaveSpecificMessage = (msgId: string) => {
+    const msgToSave = messages.find(m => m.id === msgId);
+    if (!msgToSave || !msgToSave.content) return;
+
+    try {
+      const saved = JSON.parse(localStorage.getItem('saved_ai_analyses') || '[]');
+      const newRecord = {
+        id: Date.now(),
+        date: new Date().toISOString().split('T')[0],
+        modeLabel: msgToSave.modeLabel || '极客对话',
+        content: msgToSave.content
+      };
+      
+      localStorage.setItem('saved_ai_analyses', JSON.stringify([newRecord, ...saved]));
+      
+      // 更新状态：将该消息标记为已保存，改变 UI
+      setMessages(prev => prev.map(msg => 
+        msg.id === msgId ? { ...msg, saved: true } : msg
+      ));
+      
+      toast.success('该段对话已成功存入【我的档案】✨');
+    } catch (e) {
+      toast.error('保存失败');
+    }
+  };
+
   return (
-    <div className="bg-white border-[3px] border-black rounded-[2.5rem] p-8 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] max-w-4xl mx-auto overflow-hidden relative">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="bg-white border-[3px] border-black rounded-[2.5rem] shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] max-w-4xl mx-auto overflow-hidden relative flex flex-col h-[750px]">
+      
+      {/* 头部 */}
+      <div className="p-6 border-b-2 border-gray-100 flex items-center justify-between shrink-0 bg-white z-10">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
             <BrainCircuit className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl font-black italic tracking-tighter text-black uppercase">DeepSeek Analyzer</h2>
-            <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-black italic tracking-tighter text-black uppercase">DeepSeek Copilot</h2>
+            <div className="flex items-center gap-2 mt-1">
               <div className={`w-2 h-2 rounded-full ${loading ? 'bg-amber-500 animate-ping' : 'bg-emerald-500'}`} />
-              <span className="text-[10px] font-black uppercase text-zinc-400">Stream Protocol v2.0</span>
+              <span className="text-[10px] font-black uppercase text-zinc-400">Conversational AI Engine v2.0</span>
             </div>
           </div>
         </div>
         <Terminal className="w-6 h-6 text-zinc-200" />
       </div>
 
-      {/* 🚨 这里的 placeholder 已经修改 */}
-      <textarea 
-        value={input} 
-        onChange={e => setInput(e.target.value)} 
-        placeholder="输入你想要知道的问题答案" 
-        className="w-full h-40 bg-zinc-50 border-2 border-zinc-200 rounded-[1.5rem] p-6 font-bold text-zinc-700 focus:border-blue-500 mb-6 resize-none shadow-inner outline-none transition-all" 
-      />
+      {/* 聊天记录滚动区 */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-slate-50/50">
+        <AnimatePresence>
+          {messages.map((msg) => (
+            <motion.div 
+              key={msg.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+            >
+              {/* 头像 */}
+              <div className="shrink-0 mt-1">
+                {msg.role === 'ai' ? (
+                  <div className="w-10 h-10 bg-emerald-100 border-2 border-emerald-200 text-emerald-600 rounded-[1rem] flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                ) : (
+                  <div className="w-10 h-10 bg-zinc-900 text-white rounded-[1rem] flex items-center justify-center shadow-md">
+                    <User className="w-5 h-5" />
+                  </div>
+                )}
+              </div>
 
-      {/* Mode Switches */}
-      <div className="flex gap-3 mb-6">
-        {(['suggest', 'execute', 'plan'] as const).map(m => (
-          <button 
-            key={m} 
-            onClick={() => setMode(m)} 
-            className={`flex-1 py-3 rounded-xl border-2 font-black text-[10px] uppercase tracking-widest transition-all ${
-              mode === m ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' : 'bg-zinc-50 border-zinc-100 text-zinc-400'
-            }`}
-          >
-            {m}
-          </button>
-        ))}
+              {/* 气泡框 */}
+              <div className={`max-w-[80%] flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                {msg.role === 'ai' && msg.modeLabel && (
+                  <span className="text-[10px] font-black text-gray-400 mb-1 ml-2 uppercase tracking-wider">{msg.modeLabel}</span>
+                )}
+                
+                <div className={`p-5 rounded-[24px] ${
+                  msg.role === 'user' 
+                    ? 'bg-blue-600 text-white font-bold rounded-tr-sm shadow-md' 
+                    : 'bg-white border-2 border-gray-100 text-gray-700 font-medium rounded-tl-sm shadow-sm'
+                }`}>
+                  <p className="whitespace-pre-wrap leading-relaxed text-sm">
+                    {msg.content}
+                    {msg.isStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-emerald-500 animate-pulse align-middle"></span>}
+                  </p>
+                </div>
+
+                {/* 🚨 单条消息操作栏 (仅对 AI 非加载中且非初始消息显示) */}
+                {msg.role === 'ai' && !msg.isStreaming && msg.id !== 'welcome' && (
+                  <div className="mt-2 ml-2">
+                    <button 
+                      onClick={() => !msg.saved && handleSaveSpecificMessage(msg.id)}
+                      disabled={msg.saved}
+                      className={`flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg transition-all ${
+                        msg.saved 
+                          ? 'bg-emerald-50 text-emerald-600 cursor-not-allowed' 
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-900 cursor-pointer'
+                      }`}
+                    >
+                      {msg.saved ? (
+                        <><CheckCircle2 className="w-3.5 h-3.5" /> 已存入档案</>
+                      ) : (
+                        <><BookmarkPlus className="w-3.5 h-3.5" /> 收藏此分析</>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
 
-      {/* Result Card */}
-      <AnimatePresence>
-        {hasStarted && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.98 }} 
-            animate={{ opacity: 1, scale: 1 }} 
-            className={`rounded-[2rem] border-2 p-8 mb-6 min-h-[200px] relative shadow-2xl transition-colors ${
-              error ? 'bg-rose-50 border-rose-200' : 'bg-zinc-950 border-black'
-            }`}
+      {/* 底部输入区 */}
+      <div className="shrink-0 bg-white p-6 border-t-2 border-gray-100 z-10">
+        <div className="flex gap-2 mb-4">
+          {MODE_OPTIONS.map(m => (
+            <button 
+              key={m.value} 
+              onClick={() => setMode(m.value)} 
+              className={`px-4 py-2 rounded-xl border-2 font-black text-[11px] tracking-widest transition-all ${
+                mode === m.value ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-gray-50 border-gray-100 text-gray-400 hover:bg-gray-100'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        
+        <div className="relative">
+          <textarea 
+            value={input} 
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="粘贴凌乱通知，或追问 AI 细节 (按 Enter 发送)..." 
+            className="w-full h-24 bg-gray-50 border-2 border-gray-200 rounded-[1.5rem] py-4 pl-6 pr-20 font-bold text-gray-700 focus:border-blue-500 resize-none shadow-inner outline-none transition-all custom-scrollbar" 
+          />
+          <Button 
+            onClick={handleSend} 
+            disabled={loading || !input.trim()} 
+            className="absolute right-3 bottom-3 w-12 h-12 rounded-[1rem] bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:opacity-50 disabled:bg-gray-400 p-0 flex items-center justify-center transition-all"
           >
-            {error ? (
-              <div className="flex flex-col items-center justify-center text-center space-y-4 py-6">
-                <AlertCircle className="w-12 h-12 text-rose-500" />
-                <div>
-                  <p className="font-black text-rose-700 uppercase">分析中断</p>
-                  <p className="text-xs font-bold text-rose-600/70 mt-1 max-w-sm">{error}</p>
-                </div>
-                <Button onClick={handleAnalyze} variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-100">
-                  <RefreshCcw className="w-4 h-4 mr-2" /> 重新尝试连接
-                </Button>
-              </div>
-            ) : (
-              <div ref={scrollRef} className="h-72 overflow-y-auto custom-scrollbar pr-4">
-                <div className="text-zinc-300 font-mono text-sm leading-relaxed whitespace-pre-wrap selection:bg-blue-500/30">
-                  {result}
-                  {loading && !result && (
-                    <div className="flex items-center gap-3 text-blue-400 font-black italic animate-pulse">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      正在接入神经元网络...
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="flex justify-end">
-        <Button 
-          onClick={handleAnalyze} 
-          disabled={loading} 
-          className="bg-blue-600 hover:bg-blue-500 text-white font-black px-12 h-16 rounded-[1.5rem] shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] border-2 border-black active:translate-x-1 active:translate-y-1 active:shadow-none transition-all"
-        >
-          {loading ? <Loader2 className="animate-spin" /> : '开始智能分析'}
-        </Button>
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5 ml-0.5" />}
+          </Button>
+        </div>
       </div>
+
     </div>
   );
 };
