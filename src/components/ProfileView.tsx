@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   User, Mail, GraduationCap, Github, Edit3, Trophy, ExternalLink, 
   Calendar, Sparkles, X, Plus, FileText, Bell, Clock, ShieldCheck, 
-  Send, Check, BrainCircuit, Search, Filter, ChevronRight, Copy, Maximize2, Trash2, Target, Mic 
+  Send, Check, BrainCircuit, Search, Filter, ChevronRight, Copy, Maximize2, Trash2, Target, Mic, Star 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -20,7 +20,6 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { CompetencyRadar } from './modules/CompetencyRadar';
 import { GeekActivityBoard } from './modules/GeekActivityBoard';
 import { SkillUniverse3D } from './modules/SkillUniverse3D';
-// 🚨 引入刚才写好的语音面试舱组件
 import { VoiceInterviewCabin } from './modules/VoiceInterviewCabin';
 
 export const ProfileView: React.FC<{
@@ -40,7 +39,11 @@ export const ProfileView: React.FC<{
   const [showAwardModal, setShowAwardModal] = useState(false);
   const [showHofModal, setShowHofModal] = useState(false);
   const [newAward, setNewAward] = useState({ name: '', level: '', date: '' });
-  const [hofReason, setHofReason] = useState('');
+  
+  // 🚨 升级：将原来的简单 reason 字符串，升级为结构化的申请表单状态
+  const [hofForm, setHofForm] = useState({
+    title: '', competition: '', level: '', tags: '', github: '', description: ''
+  });
   
   // AI 档案搜索、筛选与抽屉状态
   const [savedAiAnalyses, setSavedAiAnalyses] = useState<any[]>([]);
@@ -48,7 +51,6 @@ export const ProfileView: React.FC<{
   const [filterTag, setFilterTag] = useState('全部');
   const [selectedAnalysis, setSelectedAnalysis] = useState<any | null>(null);
 
-  // 🚨 新增：语音面试舱开关状态
   const [isCabinOpen, setIsCabinOpen] = useState(false);
 
   const mySubscribedComps = competitions.filter(c => subscribedIds.includes(c.id));
@@ -120,13 +122,21 @@ export const ProfileView: React.FC<{
     }
   };
 
+  // 🚨 升级：拼接结构化数据并提交
   const handleApplyHof = async () => {
-    if (hofReason.length < 10) return toast.error('申请理由请至少10个字');
+    if (!hofForm.title || !hofForm.competition || !hofForm.description) {
+      return toast.error('请填写必填项 (作品名称、所属赛事、简介)');
+    }
+    
+    // 自动将表单打包成易读的文本格式提交，不改变后端数据结构
+    const formattedReason = `【作品名称】${hofForm.title}\n【所属赛事】${hofForm.competition}\n【获奖级别】${hofForm.level}\n【核心技术】${hofForm.tags}\n【开源链接】${hofForm.github}\n【作品简介】${hofForm.description}`;
+    
     try {
-      await submitHofApplication(user!.id, hofReason);
-      toast.success('申请已提交，请等待审核');
+      await submitHofApplication(user!.id, formattedReason);
+      toast.success('申请已提交！审核通过后将展示在精品成果馆。');
       setShowHofModal(false);
-      setHofReason('');
+      // 清空表单
+      setHofForm({ title: '', competition: '', level: '', tags: '', github: '', description: '' });
     } catch (e) { toast.error('提交失败'); }
   };
 
@@ -177,7 +187,8 @@ export const ProfileView: React.FC<{
                 </>
               ) : (
                 <>
-                  <Button onClick={() => setShowHofModal(true)} className="bg-amber-500 text-white rounded-2xl h-12 px-6 font-black shadow-lg shadow-amber-100 transition-all active:scale-95"><ShieldCheck className="w-4 h-4 mr-2" /> 申请卷王榜</Button>
+                  {/* 🚨 更新了按钮文案和图标 */}
+                  <Button onClick={() => setShowHofModal(true)} className="bg-amber-500 text-white rounded-2xl h-12 px-6 font-black shadow-lg shadow-amber-100 transition-all active:scale-95"><Star className="w-4 h-4 mr-2" /> 申请成果收录</Button>
                   <Button onClick={() => setIsEditing(true)} className="bg-zinc-950 text-white rounded-2xl h-12 w-12 flex items-center justify-center shadow-xl hover:bg-black transition-colors"><Edit3 className="w-5 h-5" /></Button>
                 </>
               )}
@@ -195,7 +206,7 @@ export const ProfileView: React.FC<{
         </div>
       </div>
 
-      {/* 2. 极客数字战力画像 (雷达图) */}
+      {/* 2. 极客数字战力画像 */}
       <div className="space-y-6">
         <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3">
           <Target className="w-7 h-7 text-blue-500" /> 
@@ -222,10 +233,9 @@ export const ProfileView: React.FC<{
       {/* 3. 高阶数据看板 (热力图与趋势图) */}
       <GeekActivityBoard userId={user?.id} />
 
-      {/* 4. AI 解析档案（卡片墙 + 搜索 + 语音舱唤醒入口） */}
+      {/* 4. AI 解析档案（卡片墙 + 搜索） */}
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          {/* 🚨 这里加入了启动语音舱的按钮 */}
           <div className="flex items-center gap-4">
             <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3"><BrainCircuit className="w-7 h-7 text-emerald-500" /> AI 备赛助手记录</h2>
             <Button 
@@ -426,7 +436,7 @@ export const ProfileView: React.FC<{
         )}
       </AnimatePresence>
 
-      {/* --- 📦 弹窗区：荣誉与卷王榜 --- */}
+      {/* --- 📦 弹窗区：荣誉录入 --- */}
       <Dialog.Root open={showAwardModal} onOpenChange={setShowAwardModal}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100]" />
@@ -443,19 +453,47 @@ export const ProfileView: React.FC<{
         </Dialog.Portal>
       </Dialog.Root>
 
+      {/* 🚨 弹窗区：全新升级的收录成果申请表单 */}
       <Dialog.Root open={showHofModal} onOpenChange={setShowHofModal}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100]" />
-          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-md bg-white rounded-[32px] p-10 shadow-2xl z-[101]">
-            <Dialog.Title className="text-2xl font-black mb-4 flex items-center gap-3 text-amber-600"><ShieldCheck /> 申请卷王榜</Dialog.Title>
-            <textarea value={hofReason} onChange={e => setHofReason(e.target.value)} placeholder="写下你的申请理由..." className="w-full h-40 p-5 bg-gray-50 rounded-[24px] border-2 outline-none font-medium mb-4" />
-            <Button onClick={handleApplyHof} className="w-full h-16 bg-amber-50 text-white font-black rounded-2xl flex items-center justify-center gap-3"><Send className="w-5 h-5" /> 提交申请</Button>
-            <Dialog.Close className="absolute top-6 right-6 p-2 text-gray-300 hover:text-gray-900"><X /></Dialog.Close>
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-xl bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl z-[101] max-h-[90vh] overflow-y-auto custom-scrollbar">
+            
+            <Dialog.Title className="text-2xl font-black mb-2 flex items-center gap-3 text-amber-500">
+              <Star className="w-7 h-7" /> 申请收录精品成果馆
+            </Dialog.Title>
+            <p className="text-xs font-bold text-gray-400 mb-8">提交你的硬核项目，经过社区评议后将展示在全球成果库中。</p>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                 <Input value={hofForm.title} onChange={e => setHofForm({...hofForm, title: e.target.value})} placeholder="作品/项目名称 *" className="h-14 rounded-2xl border-2 font-bold bg-gray-50 focus:bg-white" />
+                 <Input value={hofForm.competition} onChange={e => setHofForm({...hofForm, competition: e.target.value})} placeholder="所属赛事 *" className="h-14 rounded-2xl border-2 font-bold bg-gray-50 focus:bg-white" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                 <Input value={hofForm.level} onChange={e => setHofForm({...hofForm, level: e.target.value})} placeholder="获奖级别 (如:国一) *" className="h-14 rounded-2xl border-2 font-bold bg-gray-50 focus:bg-white" />
+                 <Input value={hofForm.tags} onChange={e => setHofForm({...hofForm, tags: e.target.value})} placeholder="核心技术栈 (用逗号分隔)" className="h-14 rounded-2xl border-2 font-bold bg-gray-50 focus:bg-white" />
+              </div>
+              <Input value={hofForm.github} onChange={e => setHofForm({...hofForm, github: e.target.value})} placeholder="开源/展示链接 (GitHub/Bilibili 等)" className="h-14 rounded-2xl border-2 font-bold bg-gray-50 focus:bg-white" />
+              
+              <textarea 
+                value={hofForm.description} 
+                onChange={e => setHofForm({...hofForm, description: e.target.value})} 
+                placeholder="作品简介与核心亮点... *" 
+                className="w-full h-32 p-4 bg-gray-50 focus:bg-white rounded-[24px] border-2 outline-none font-medium resize-none transition-colors" 
+              />
+              
+              <Button onClick={handleApplyHof} className="w-full h-14 mt-4 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-2xl flex items-center justify-center gap-3 shadow-lg shadow-amber-100 transition-colors">
+                <Send className="w-5 h-5" /> 提交收录申请
+              </Button>
+            </div>
+            
+            <Dialog.Close className="absolute top-6 right-6 p-2 text-gray-300 hover:text-gray-900 bg-gray-50 rounded-full transition-colors">
+              <X className="w-5 h-5" />
+            </Dialog.Close>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
 
-      {/* 🚨 新增：语音面试舱全屏弹窗 */}
       <VoiceInterviewCabin isOpen={isCabinOpen} onClose={() => setIsCabinOpen(false)} />
 
     </div>
