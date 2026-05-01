@@ -1,6 +1,16 @@
 import { supabaseClient } from '@/src/lib/supabaseClient';
 import { categoryToSkillDimension, difficultyWeight, type SkillDimension } from '@/src/lib/focusBuckets';
 
+/** 新增：生成不可篡改的成长指纹 (SHA-256) */
+export async function generateGrowthFingerprint(state: GrowthUpsert): Promise<string> {
+  const rawData = `${state.user_id}-${state.exp_algorithm}-${state.exp_dev}-${state.streak_days}-${state.updated_at}`;
+  const msgUint8 = new TextEncoder().encode(rawData);
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return `G-HUB-CERT-${hashHex.slice(0, 12).toUpperCase()}`;
+}
+
 /** E = t × w × (1 + 0.1 × streak)，t 为分钟 */
 export function computeFocusExp(tMinutes: number, category: string, streak: number): number {
   const t = Math.max(0, tMinutes);
@@ -87,7 +97,7 @@ export async function applyFocusExpAfterSession(userId: string, tMinutes: number
   if (error) console.warn('[growth] applyFocusExpAfterSession', error.message);
 }
 
-/** 打卡后刷新连续天数（不额外加 EXP，避免与专注重复计分） */
+/** 打卡后刷新连续天数 */
 export async function refreshGrowthStreak(userId: string): Promise<void> {
   const dates = await fetchActivityDateSet(userId);
   const streak = streakFromDateSet(dates);

@@ -1,253 +1,254 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Brain, Briefcase, Network, Save, Sparkles, Target } from 'lucide-react';
+import { DynamicTopology3D } from './DynamicTopology3D';
+import React, { useState, useEffect } from 'react';
+import {
+  Compass, Zap, Database, Layers, CheckCircle2,
+  ChevronDown, Cpu, Network, Briefcase, Activity, AlertTriangle, Check, Mic
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { type Competition } from '../data';
-import { useAuth } from '../context/AuthContext';
-import { fetchRecentFocusSessions, type FocusSessionRow } from '../lib/supabaseClient';
 
-type CareerNode = {
-  role: string;
-  skills: string[];
-  reason: string;
-};
+// 🚀 新增引入面试舱组件
+import { VoiceInterviewCabin } from './modules/VoiceInterviewCabin';
 
-type GraphInsight = {
-  id: string;
+// --- 💡 定义严格的类型接口，解决 isWarning 报错 ---
+interface CareerBlock {
   title: string;
-  competition: string;
-  role: string;
-  reason: string;
-};
+  desc: string;
+  icon: React.ReactNode;
+  color: string;
+  isWarning?: boolean; // 问号表示可选，完美解决报错
+}
 
-const ROLE_GRAPH: CareerNode[] = [
-  { role: '量化交易工程师', skills: ['C++', '算法', '数学建模', '优化'], reason: '高性能计算与策略优化能力高度匹配。' },
-  { role: '后端架构师', skills: ['C++', '系统设计', '算法', '分布式'], reason: '偏底层与服务稳定性能力贴近后端架构岗位。' },
-  { role: '算法工程师', skills: ['Python', '算法', '机器学习', '数学'], reason: '从竞赛算法迁移到模型研发成本更低。' },
-  { role: '安全工程师', skills: ['CTF', '加密算法', '渗透测试', '网络'], reason: '攻防实战能力可直接映射安全岗位。' },
-  { role: '前端工程师', skills: ['Web', 'UI', '交互设计', 'JavaScript'], reason: '作品呈现与交互实现能力可快速转化。' },
+interface CareerData {
+  matchScore: number;
+  blocks: CareerBlock[];
+  pool: string[];
+}
+
+const CAREER_MATRICES = [
+  {
+    category: '产品与商业化体系',
+    icon: <Briefcase className="w-4 h-4 text-blue-500" />,
+    roles: ['技术型产品经理', 'AI 产品经理']
+  },
+  {
+    category: '前沿算法与数据体系',
+    icon: <Network className="w-4 h-4 text-purple-500" />,
+    roles: ['大模型应用工程师', '算法研究员']
+  },
+  {
+    category: '核心工程与架构体系',
+    icon: <Layers className="w-4 h-4 text-emerald-500" />,
+    roles: ['全栈开发工程师', '云原生架构师']
+  }
 ];
 
-const extractSkillTags = (comp: any): string[] => {
-  const tags = Array.isArray(comp.techStack) ? comp.techStack : [];
-  const extTags = Array.isArray(comp.tags) ? comp.tags : [];
-  if (tags.length + extTags.length > 0) return [...tags, ...extTags];
-  const name = String(comp.name || '');
-  const bag: string[] = [];
-  if (name.includes('蓝桥杯')) bag.push('C++', '算法');
-  if (name.includes('数学建模')) bag.push('数学建模', '优化', 'Python');
-  if (name.includes('信息安全')) bag.push('CTF', '加密算法');
-  if (name.includes('计算机设计')) bag.push('Web', 'UI');
-  return bag.length > 0 ? bag : ['通用工程能力'];
+// 用户的真实资产底座
+const USER_ACTUAL_ASSETS = {
+  algorithms: ['CCF CSP 认证', 'C++', 'Java', 'Python', 'BFS/DFS', '动态规划'],
+  projects: ['Xiaomi Notes 源码深度拆解', 'Android SDK 应用开发', '微信小程序多人协同开发'],
+  ai_ml: ['K-Means 聚类', 'Logistic Regression 分类器']
 };
 
-export const CareerNavigator: React.FC<{ competitions: Competition[] }> = ({ competitions }) => {
-  const { user } = useAuth();
-  const [focusRows, setFocusRows] = useState<FocusSessionRow[]>([]);
-  const [memoPool, setMemoPool] = useState<GraphInsight[]>([]);
-  const [activePanel, setActivePanel] = useState<'graph' | 'memo' | 'action'>('graph');
+// --- 🧠 增强版数据引擎 ---
+const evaluateCareerMatch = (role: string, assets: typeof USER_ACTUAL_ASSETS): CareerData => {
+  const base: Record<string, CareerData> = {
+    '技术型产品经理': {
+      matchScore: 88,
+      blocks: [
+        { title: '复杂业务逆向工程', desc: `已确认数据：${assets.projects[0]}`, icon: <Layers />, color: 'bg-blue-500' },
+        { title: '敏捷协同与边界把控', desc: `已确认数据：${assets.projects[2]}`, icon: <Activity />, color: 'bg-indigo-500' },
+        { title: '逻辑抽象能力', desc: `已确认数据：${assets.algorithms[0]} & ${assets.algorithms[1]}`, icon: <Cpu />, color: 'bg-cyan-500' }
+      ],
+      pool: [
+        '基于 Xiaomi Notes 拆解，输出一份商业化 PRD',
+        '复盘微信小程序协作痛点，提炼为项目管理经验',
+        '分析 C++ 内存管理逻辑对系统稳定性设计的影响',
+        '撰写一份关于“从开发者视角看产品体验”的分享文档',
+        '为 Xiaomi Notes 设计一个基于 AI 的自动化标签功能'
+      ]
+    },
+    'AI 产品经理': {
+      matchScore: 75,
+      blocks: [
+        { title: '模型能力产品化', desc: `已确认数据：${assets.ai_ml[0]} & ${assets.ai_ml[1]}`, icon: <Network />, color: 'bg-emerald-500' },
+        { title: '技术栈纵深', desc: `已确认数据：${assets.algorithms[3]} 数据处理`, icon: <Database />, color: 'bg-teal-500' },
+        { title: '⚠️ 提示词工程数据缺失', desc: '系统未检测到大模型 Prompt 实战记录', icon: <AlertTriangle />, color: 'bg-orange-500', isWarning: true }
+      ],
+      pool: [
+        '【推荐行动】接入 DeepSeek API，完成一个智能问答 Demo',
+        '将 K-Means 理解转化为《聚类分析指导用户增长》方案',
+        '设计一个基于逻辑回归的简单用户流失预警原型'
+      ]
+    },
+    '云原生架构师': {
+      matchScore: 25,
+      blocks: [
+        { title: '编程语言基础', desc: `已确认数据：${assets.algorithms[2]} 等基础开发`, icon: <Cpu />, color: 'bg-gray-600' },
+        { title: '🚨 容器化技术缺失', desc: '未检索到 Docker/K8s 相关项目', icon: <AlertTriangle />, color: 'bg-red-500', isWarning: true },
+        { title: '🚨 高并发架构缺失', desc: '未检索到微服务拆分经验', icon: <AlertTriangle />, color: 'bg-red-500', isWarning: true }
+      ],
+      pool: [
+        '【紧急补缺】完成一个基于 Docker 部署的微服务项目',
+        '学习 Kubernetes 基础，并在本地集群运行'
+      ]
+    }
+  };
+
+  return base[role] || {
+    matchScore: 60,
+    blocks: [{ title: '基础工程能力', desc: '已确认通用开发数据', icon: <Layers />, color: 'bg-blue-500' }],
+    pool: ['补充 GitHub 开源项目 Readme', '优化个人技术博客架构']
+  };
+};
+
+export const CareerNavigator: React.FC = () => {
+  const [selectedRole, setSelectedRole] = useState('技术型产品经理');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [translationData, setTranslationData] = useState<CareerData>(() => evaluateCareerMatch('技术型产品经理', USER_ACTUAL_ASSETS));
+
+  const [activeTasks, setActiveTasks] = useState<string[]>([]);
+  const [taskPool, setTaskPool] = useState<string[]>([]);
+  const [completingId, setCompletingId] = useState<number | null>(null);
+
+  // 🚀 新增面试舱的开启状态
+  const [isInterviewOpen, setIsInterviewOpen] = useState(false);
 
   useEffect(() => {
-    const load = async () => {
-      if (!user?.id) {
-        setFocusRows([]);
-        return;
+    const newData = evaluateCareerMatch(selectedRole, USER_ACTUAL_ASSETS);
+    setTranslationData(newData);
+    setActiveTasks(newData.pool.slice(0, 3));
+    setTaskPool(newData.pool.slice(3));
+    setIsDropdownOpen(false);
+  }, [selectedRole]);
+
+  const handleTaskComplete = (index: number) => {
+    if (completingId !== null) return;
+    setCompletingId(index);
+    toast.success('任务达成！正在生成新挑战...');
+
+    setTimeout(() => {
+      const nextActive = [...activeTasks];
+      const nextPool = [...taskPool];
+
+      if (nextPool.length > 0) {
+        nextActive[index] = nextPool.shift()!;
+        setTaskPool(nextPool);
+      } else {
+        nextActive.splice(index, 1);
       }
-      const rows = await fetchRecentFocusSessions(user.id, 180).catch(() => []);
-      setFocusRows(rows);
-    };
-    load();
-  }, [user?.id]);
 
-  const statCards = useMemo(() => {
-    if (focusRows.length === 0) {
-      return [
-        { label: '高频打卡技术栈', value: '暂无数据', ratio: 0 },
-        { label: '平均日专注时长', value: '-- 分钟', ratio: 0 },
-        { label: '双栈能力占比', value: '--%', ratio: 0 },
-      ];
-    }
-
-    const categoryMap: Record<string, number> = {};
-    let total = 0;
-    const dayMinutes: Record<string, number> = {};
-    const dayCats: Record<string, Set<string>> = {};
-
-    focusRows.forEach((row) => {
-      const minutes = Number(row.duration_minutes) || 0;
-      total += minutes;
-      const cat = row.category || '综合';
-      categoryMap[cat] = (categoryMap[cat] || 0) + minutes;
-      const day = row.session_date || (row.created_at ? row.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10));
-      dayMinutes[day] = (dayMinutes[day] || 0) + minutes;
-      if (!dayCats[day]) dayCats[day] = new Set<string>();
-      dayCats[day].add(cat);
-    });
-
-    const topCats = Object.entries(categoryMap)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([k]) => k)
-      .join(' / ');
-    const days = Object.keys(dayMinutes).length || 1;
-    const avgDaily = Math.round(total / days);
-    const dualDays = Object.values(dayCats).filter((set) => set.size >= 2).length;
-    const dualRate = Math.round((dualDays / days) * 100);
-
-    return [
-      { label: '高频打卡技术栈', value: topCats || '暂无数据', ratio: Math.min(1, (Object.values(categoryMap).sort((a, b) => b - a)[0] || 0) / Math.max(total, 1)) },
-      { label: '平均日专注时长', value: `${avgDaily} 分钟`, ratio: Math.min(1, avgDaily / 240) },
-      { label: '双栈能力占比', value: `${dualRate}%`, ratio: dualRate / 100 },
-    ];
-  }, [focusRows]);
-
-  const topGraphMatches = useMemo(() => {
-    const insights: GraphInsight[] = [];
-    competitions.slice(0, 8).forEach((comp) => {
-      const tags = extractSkillTags(comp);
-      const bestMatch = ROLE_GRAPH
-        .map((node) => ({
-          node,
-          score: node.skills.filter((skill) => tags.some((tag) => tag.toLowerCase().includes(skill.toLowerCase()))).length,
-        }))
-        .sort((a, b) => b.score - a.score)[0];
-
-      if (!bestMatch || bestMatch.score === 0) return;
-      insights.push({
-        id: `${comp.id}-${bestMatch.node.role}`,
-        title: `${comp.name} -> ${bestMatch.node.role}`,
-        competition: comp.name,
-        role: bestMatch.node.role,
-        reason: bestMatch.node.reason,
-      });
-    });
-    if (insights.length > 0) return insights.slice(0, 6);
-    return competitions.slice(0, 3).map((comp, idx) => ({
-      id: `fallback-${comp.id}-${idx}`,
-      title: `${comp.name} -> 算法/工程复合岗位`,
-      competition: comp.name,
-      role: '算法工程师',
-      reason: '该赛事体现了工程实现与问题求解能力，可先映射到算法工程岗位。',
-    }));
-  }, [competitions]);
-
-  const saveInsight = (item: GraphInsight) => {
-    if (memoPool.some((it) => it.id === item.id)) {
-      toast.info('该建议已存入图谱');
-      return;
-    }
-    setMemoPool((prev) => [item, ...prev]);
-    toast.success('已存入你的职业图谱资产');
+      setActiveTasks(nextActive);
+      setCompletingId(null);
+    }, 600);
   };
 
   return (
-    <div className="bg-white/70 backdrop-blur-md p-8 rounded-[40px] border border-gray-100 shadow-sm space-y-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3">
-            <Target className="w-7 h-7 text-blue-600" />
-            职业转化导航
-          </h2>
-          <p className="text-sm font-bold text-gray-400 mt-2">竞赛成绩不只看排名，更直接映射到岗位机会。</p>
-        </div>
-        <span className="text-[10px] px-3 py-2 rounded-xl bg-blue-50 text-blue-600 font-black uppercase tracking-widest">
-          Job Conversion
-        </span>
-      </div>
+    <div className="min-h-screen bg-[#F8F9FD] p-6 lg:p-10 space-y-8 animate-in fade-in duration-700">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {statCards.map((item) => (
-          <div key={item.label} className="rounded-3xl border border-blue-100 bg-blue-50/40 p-5">
-            <div className="text-xs font-black text-blue-600 uppercase tracking-wider">{item.label}</div>
-            <div className="text-lg font-black mt-2 text-gray-900">{item.value}</div>
-            <div className="mt-4 h-2 rounded-full bg-white overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.round(item.ratio * 100)}%` }} />
+        {/* 左侧控制台 */}
+        <div className="lg:col-span-4 space-y-6">
+          {/* 🚀 修改这里：把标题和新增的模拟面试小按钮放在同一行 */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-3xl font-black text-gray-900 tracking-tighter flex items-center gap-3">
+              <Compass className="w-8 h-8 text-blue-600" /> 职业引航舱
+            </h2>
+            <button
+              onClick={() => setIsInterviewOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50/80 hover:bg-blue-100 text-blue-600 border border-blue-100/50 rounded-full text-[11px] font-black tracking-widest transition-all active:scale-95 shadow-sm"
+            >
+              <Mic className="w-3.5 h-3.5" />
+              模拟面试
+            </button>
+          </div>
+
+          <div className="bg-white rounded-[2rem] p-6 border border-gray-100 shadow-xl shadow-blue-900/5">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 block">Target Role</label>
+            <div className="relative">
+              <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 px-6 py-4 rounded-2xl">
+                <span className="font-black text-gray-900">{selectedRole}</span>
+                <ChevronDown className={`w-5 h-5 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+              <AnimatePresence>
+                {isDropdownOpen && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute z-50 top-full mt-2 w-full bg-white border border-gray-100 rounded-2xl shadow-2xl max-h-80 overflow-y-auto">
+                    {CAREER_MATRICES.map((matrix, idx) => (
+                      <div key={idx} className="p-4 border-b border-gray-50 last:border-0">
+                        <span className="text-[10px] font-black text-gray-400 uppercase block mb-2">{matrix.category}</span>
+                        {matrix.roles.map(role => (
+                          <button key={role} onClick={() => setSelectedRole(role)} className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold ${selectedRole === role ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
+                            {role}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          onClick={() => setActivePanel('graph')}
-          className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${activePanel === 'graph' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-gray-200 hover:border-emerald-200'}`}
-        >
-          岗位推荐知识图谱
-        </button>
-        <button
-          onClick={() => setActivePanel('memo')}
-          className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${activePanel === 'memo' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200 hover:border-blue-200'}`}
-        >
-          AI 建议灵感库
-        </button>
-        <button
-          onClick={() => setActivePanel('action')}
-          className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${activePanel === 'action' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white text-gray-500 border-gray-200 hover:border-amber-200'}`}
-        >
-          职业动作清单
-        </button>
-      </div>
-
-      {activePanel === 'graph' && (
-        <div className="rounded-[28px] border border-gray-100 p-6 bg-white">
-          <h3 className="text-lg font-black text-gray-900 flex items-center gap-2 mb-4">
-            <Network className="w-5 h-5 text-emerald-500" />
-            竞赛技能 {'->'} 岗位图谱推荐
-          </h3>
-          <div className="space-y-4">
-            {topGraphMatches.map((item) => (
-              <div key={item.id} className="rounded-2xl border border-gray-100 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                  <div className="font-black text-gray-900">{item.title}</div>
-                  <p className="text-xs font-bold text-gray-500 mt-1">{item.reason}</p>
-                </div>
-                <button
-                  onClick={() => saveInsight(item)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-black border border-emerald-100 hover:bg-emerald-100 transition-all"
-                >
-                  <Save className="w-4 h-4" />
-                  存入图谱
-                </button>
-              </div>
-            ))}
+        {/* 右侧蓝图 */}
+        <div className="lg:col-span-8 bg-gray-900 rounded-[2.5rem] p-8 lg:p-10 border border-gray-800 shadow-2xl flex flex-col md:flex-row items-center gap-10">
+          <div className="relative shrink-0">
+            <svg className="w-40 h-40 transform -rotate-90">
+              <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-gray-800" />
+              <motion.circle key={selectedRole} initial={{ strokeDasharray: "0 440" }} animate={{ strokeDasharray: `${(translationData.matchScore / 100) * 440} 440` }} cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="8" fill="transparent" className={`${translationData.matchScore >= 80 ? 'text-emerald-500' : translationData.matchScore >= 60 ? 'text-blue-500' : 'text-red-500'}`} strokeLinecap="round" />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-4xl font-black text-white">{translationData.matchScore}%</span>
+            </div>
+          </div>
+          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <AnimatePresence mode="popLayout">
+              {translationData.blocks.map((block, idx) => (
+                <motion.div key={`${selectedRole}-${idx}`} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className={`bg-gray-800/50 border ${block.isWarning ? 'border-red-900/50' : 'border-gray-700'} p-5 rounded-2xl`}>
+                  <div className={`w-8 h-8 rounded-lg ${block.color} flex items-center justify-center mb-4 text-white`}>{block.icon}</div>
+                  <h4 className={`text-sm font-black mb-1 ${block.isWarning ? 'text-red-400' : 'text-white'}`}>{block.title}</h4>
+                  <p className="text-xs font-bold text-gray-400 leading-relaxed">{block.desc}</p>
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
         </div>
-      )}
+      </div>
 
-      {activePanel === 'memo' && (
-        <div className="rounded-3xl border border-gray-100 p-6 bg-zinc-950 text-zinc-100">
-          <h3 className="font-black flex items-center gap-2">
-            <Brain className="w-5 h-5 text-blue-400" />
-            AI 建议灵感库
-          </h3>
-          <p className="text-xs text-zinc-400 font-bold mt-2">点击“存入图谱”后，建议会固化为你的个人职业资产。</p>
-          <div className="mt-4 space-y-3">
-            {memoPool.length === 0 ? (
-              <div className="text-xs text-zinc-500 font-bold">还没有资产，先从上方岗位推荐存一条吧。</div>
-            ) : (
-              memoPool.map((item) => (
-                <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-                  <div className="text-sm font-black">{item.role}</div>
-                  <p className="text-xs text-zinc-400 mt-1">{item.reason}</p>
+      {/* 3D 拓扑组件 */}
+      <div className="bg-[#0A0A0A] rounded-[2.5rem] border border-gray-800 h-[500px] relative overflow-hidden">
+        <div className="absolute top-6 left-8 z-20">
+          <h3 className="text-white font-black text-xl flex items-center gap-2"><Zap className="w-5 h-5 text-emerald-400" /> 动态映射拓扑</h3>
+        </div>
+        <div className="absolute inset-0 z-10">
+          <DynamicTopology3D targetRole={selectedRole} />
+        </div>
+      </div>
+
+      {/* 任务流水线战区 */}
+      <div className="bg-white rounded-[2.5rem] border border-gray-100 p-8 shadow-sm">
+        <h3 className="text-xl font-black text-gray-900 mb-6 flex items-center gap-2"><CheckCircle2 className="w-6 h-6 text-emerald-500" /> 行动指南与数据补齐</h3>
+        <div className="space-y-3 min-h-[150px]">
+          <AnimatePresence mode="popLayout">
+            {activeTasks.length > 0 ? activeTasks.map((task, idx) => (
+              <motion.div key={task} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} onClick={() => handleTaskComplete(idx)} className={`flex items-start gap-4 p-4 rounded-2xl border transition-all cursor-pointer group ${task.includes('行动') || task.includes('补缺') ? 'bg-orange-50/50 border-orange-100' : 'bg-[#F8F9FD] border-transparent hover:border-blue-100'}`}>
+                <div className={`w-6 h-6 shrink-0 rounded-full border-2 flex items-center justify-center mt-0.5 ${completingId === idx ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 group-hover:border-blue-500 bg-white'}`}>
+                  {completingId === idx && <Check className="w-4 h-4 text-white" />}
                 </div>
-              ))
+                <span className={`text-sm font-bold ${completingId === idx ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{task}</span>
+              </motion.div>
+            )) : (
+              <div className="py-10 text-center"><h4 className="text-lg font-black text-gray-900">Mission Accomplished!</h4></div>
             )}
-          </div>
+          </AnimatePresence>
         </div>
-      )}
+      </div>
 
-      {activePanel === 'action' && (
-        <div className="rounded-3xl border border-amber-100 p-6 bg-amber-50/40">
-          <h3 className="font-black flex items-center gap-2 text-gray-900">
-            <Briefcase className="w-5 h-5 text-amber-600" />
-            就业导向动作清单
-          </h3>
-          <div className="mt-4 space-y-3 text-sm font-bold text-gray-600">
-            <div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-600" /> 先补齐你最弱的一项岗位核心技能。</div>
-            <div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-600" /> 每周至少一次“竞赛成果 {'->'} 项目复盘”归档。</div>
-            <div className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-600" /> 把图谱资产同步到简历的“项目能力证明”。</div>
-          </div>
-        </div>
-      )}
+      {/* 🚀 挂载模拟面试舱，并且隐藏时不占位 */}
+      <VoiceInterviewCabin
+        isOpen={isInterviewOpen}
+        onClose={() => setIsInterviewOpen(false)}
+      />
     </div>
   );
 };

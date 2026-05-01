@@ -232,3 +232,22 @@ export async function fetchSubscriptionsWithCompetitions(userId: string) {
     category: r.competitions?.category || ''
   }));
 }
+// ... 您原有的代码保持不变 ...
+
+// --- 🚀 新增：方案 B 核心函数 ---
+/**
+ * 从 profiles 表中拉取所有极客的特征数据
+ * 用于喂给 AI 引擎进行聚类分析
+ */
+export async function fetchAllGeekProfiles(): Promise<any[]> {
+  const { data, error } = await supabaseClient
+    .from('profiles') // 🚨 注意：这里指向我们刚才 SQL 创建的 profiles 表
+    .select('id, username, algorithm_score, engineering_score, product_score, focus_hours')
+    .limit(50); // 限制取 50 条，保证聚类样本充足
+
+  if (error) {
+    console.error('拉取极客特征数据失败:', error);
+    throw error;
+  }
+  return data || [];
+}

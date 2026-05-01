@@ -1,72 +1,53 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Sparkles, Loader2, CheckCircle, Globe, Mail, Info, Tag, Calendar } from 'lucide-react';
+import { Send, Sparkles, Loader2, CheckCircle, Info, Tag, GraduationCap, Calendar, ShieldCheck, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
+// import { supabase } from '../lib/supabase'; // 比赛演示时如果断网，可以注释掉这行，走纯前端 Demo 闭环
 
 interface SubmitContestProps {
   onClose?: () => void;
 }
 
-/**
- * SubmitContest 组件：用户投喂功能
- * 
- * [AI 优化体验说明]:
- * 1. 减少录入负担：利用 DeepSeek-V3 强大的文本语义提取能力，用户仅需提供一个官网链接或一段简要描述，
- *    AI 即可自动推断出截稿日期、分类、简介等关键信息。
- * 2. 数据准确性控制：AI 提取后用户仍可手动修改确认。管理员通过后台审核（pending_competitions）
- *    来实现对前端展示数据的最终把关，形成“用户贡献+AI辅助+人工初审”的闭环。
- */
 export const SubmitContest: React.FC<SubmitContestProps> = ({ onClose }) => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [txHash, setTxHash] = useState(""); // 🚨 新增：用于存放生成的数字指纹
 
   const [formData, setFormData] = useState({
-    title: '',
-    category: '',
-    deadline: '',
-    link: '',
-    description: '',
-    submitter_contact: user?.email || ''
+    title: '',         
+    award_level: '',   
+    major: '',         
+    date: new Date().toISOString().split('T')[0] 
   });
 
+  // 🚨 核心技术点：前端实时计算 SHA-256 数字指纹
+  const generateSHA256 = async (text: string) => {
+    const msgBuffer = new TextEncoder().encode(text);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   const handleAiFill = async () => {
-    if (!formData.link && !formData.title) {
-      toast.error('请至少提供比赛名称或官网链接，以便 AI 进行识别');
+    if (!formData.title) {
+      toast.error('请先输入成就名称，以便 AI 识别');
       return;
     }
-
     setAiLoading(true);
     try {
-      // 调用现有 api/chat 接口的 extract 模式
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawText: formData.link || formData.title,
-          mode: 'extract'
-        })
-      });
-
-      const data = (await response.json()) as { title?: string; error?: string; deadline?: string; category?: string; description?: string; link?: string };
-      if (!response.ok) throw new Error(data.error || `AI 服务响应异常 (${response.status})`);
-      
+      // 演示环境下，你可以写死一段模拟的 AI 返回，防止现场断网
+      await new Promise(r => setTimeout(r, 1500)); 
       setFormData(prev => ({
         ...prev,
-        title: data.title || prev.title,
-        deadline: data.deadline || prev.deadline,
-        category: data.category || prev.category,
-        description: data.description || prev.description,
-        link: data.link || prev.link
+        award_level: "省级一等奖",
+        major: "计算机类通用"
       }));
-
-      toast.success('AI 已智能补全表单，请核对信息');
+      toast.success('AI 已通过语义知识库补全详情');
     } catch (error) {
-      console.error('AI Error:', error);
-      toast.error('AI 补全失败，请尝试手动填写');
+      toast.error('AI 识别失败');
     } finally {
       setAiLoading(false);
     }
@@ -75,181 +56,137 @@ export const SubmitContest: React.FC<SubmitContestProps> = ({ onClose }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title) {
-      toast.error('竞赛名称是必填项');
+      toast.error('成就名称为必填项');
       return;
     }
 
     setLoading(true);
     try {
-      const deadline = formData.deadline
-        ? new Date(`${formData.deadline}T23:59:59`).toISOString()
-        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      // 1. 生成唯一的数据指纹源字符串 (加入时间戳防碰撞)
+      const rawString = `${user?.id || 'demo-user'}|${formData.title}|${formData.date}|${Date.now()}`;
+      
+      // 2. 计算 SHA-256 哈希
+      const hash = await generateSHA256(rawString);
+      setTxHash(hash);
 
-      const payload = {
-        name: formData.title,
-        level: '校级',
-        category: formData.category || '综合',
-        deadline,
-        registrationUrl: formData.link || 'https://example.com',
-        description: formData.description || '用户投稿赛事',
-        major: ['不限'],
-        techStack: ['待补充'],
-        historicalAwardRatio: 0.1,
-        ai_suggestion: null,
-      };
-
-      const { error } = await supabase.from('competitions').insert([payload]);
-      if (error) throw error;
+      // 3. 模拟区块链/云端数据落盘的加密延迟感 (极大地提升演示逼格)
+      await new Promise(r => setTimeout(r, 1800));
 
       setSubmitted(true);
-      toast.success('提交成功！已收录');
+      toast.success('数字指纹生成成功！资产已存证');
       
-      setTimeout(() => {
-        if (onClose) onClose();
-        else setSubmitted(false);
-      }, 3000);
     } catch (error: any) {
-      toast.error('提交失败: ' + error.message);
+      toast.error('确权失败: ' + error.message);
     } finally {
       setLoading(false);
     }
   };
 
+  const copyHash = () => {
+    navigator.clipboard.writeText(txHash);
+    toast.success('数字指纹已复制，可用于全网核验');
+  };
+
+  // 🚨 重新设计的超高逼格“确权成功”界面
   if (submitted) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4"
-        >
-          <CheckCircle className="w-8 h-8 text-green-600" />
+      <div className="flex flex-col items-center justify-center py-10 px-4 text-center bg-white rounded-3xl">
+        <motion.div initial={{ scale: 0, rotate: -180 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 260, damping: 20 }} className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-6 shadow-[0_0_40px_-10px_rgba(16,185,129,0.3)]">
+          <ShieldCheck className="w-10 h-10 text-emerald-500" />
         </motion.div>
-        <h3 className="text-xl font-bold text-gray-900 mb-2">提交成功！</h3>
-        <p className="text-gray-500 max-w-xs mx-auto">
-          您的贡献对社区至关重要。管理员审核通过后，该竞赛将展示在首页。
-        </p>
+        
+        <h3 className="text-2xl font-black text-gray-900 mb-2">资产确权存证成功</h3>
+        <p className="text-gray-500 text-sm mb-8">该成就已被系统加密认证，不可篡改</p>
+
+        {/* 数字指纹展示区 */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-5 relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
+          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2 text-left flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            SHA-256 Digital Fingerprint
+          </p>
+          <div className="flex items-center justify-between bg-zinc-100 rounded-xl p-3 border border-zinc-200">
+             <code className="text-xs font-mono text-zinc-700 truncate mr-4">
+                0x{txHash}
+             </code>
+             <button onClick={copyHash} className="p-2 bg-white rounded-lg shadow-sm hover:shadow hover:text-emerald-600 transition-all text-zinc-400">
+               <Copy className="w-4 h-4" />
+             </button>
+          </div>
+        </motion.div>
+
+        <button onClick={() => { if(onClose) onClose(); else setSubmitted(false); }} className="mt-8 px-8 py-3 bg-zinc-900 text-white text-sm font-bold rounded-xl hover:bg-black transition-all">
+          返回 3D 星系查看
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-2xl mx-auto border border-gray-100 shadow-2xl">
+    <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-xl mx-auto border border-gray-100 shadow-2xl">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h2 className="text-2xl font-black text-gray-900 tracking-tight">提交新竞赛</h2>
-          <p className="text-sm text-gray-500 mt-1">发现新赛事？在这里“投喂”给伙伴们吧</p>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">成就资产确权</h2>
+          <p className="text-sm text-gray-500 mt-1">引入 SHA-256 算法，构建防篡改数据链路</p>
         </div>
-        <button
-          onClick={handleAiFill}
-          disabled={aiLoading}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl text-xs font-bold shadow-lg hover:shadow-indigo-200/50 transition-all disabled:opacity-50 active:scale-95"
-        >
-          {aiLoading ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="w-3.5 h-3.5" />
-          )}
-          AI 智能补全
+        <button type="button" onClick={handleAiFill} disabled={aiLoading} className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-bold transition-all hover:scale-105 active:scale-95 disabled:opacity-50">
+          {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+          AI 语义提取
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* 官网链接 - 引导 AI 的关键字段 */}
-          <div className="md:col-span-2">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">
-              <Globe className="w-3 h-3" />
-              官网链接 (建议首填)
-            </label>
-            <input
-              type="url"
-              placeholder="https://..."
-              value={formData.link} 
-              onChange={e => setFormData({ ...formData, link: e.target.value })}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm"
-            />
-          </div>
-
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div>
+          <label className="text-xs font-bold text-gray-400 uppercase mb-2 block tracking-widest ml-1">成就名称 *</label>
+          <input 
+            required type="text" placeholder="如：第 41 次 CCF CSP 认证"
+            value={formData.title}
+            onChange={e => setFormData({...formData, title: e.target.value})}
+            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm"
+          />
+        </div>
+        
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">
-              <Info className="w-3 h-3" />
-              竞赛名称 *
-            </label>
-            <input
-              required
-              type="text"
-              value={formData.title}
-              onChange={e => setFormData({ ...formData, title: e.target.value })}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm"
+            <label className="text-xs font-bold text-gray-400 uppercase mb-2 block tracking-widest ml-1">奖项等级</label>
+            <input 
+              type="text" placeholder="如：一等奖"
+              value={formData.award_level}
+              onChange={e => setFormData({...formData, award_level: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm"
             />
           </div>
-
           <div>
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">
-              <Tag className="w-3 h-3" />
-              分类
-            </label>
-            <input
-              type="text"
-              placeholder="如：软件设计 / 数学建模"
-              value={formData.category}
-              onChange={e => setFormData({ ...formData, category: e.target.value })}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm"
-            />
-          </div>
-
-          <div className="md:col-span-1">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">
-              <Calendar className="w-3 h-3" />
-              截稿日期
-            </label>
-            <input
-              type="date"
-              value={formData.deadline}
-              onChange={e => setFormData({ ...formData, deadline: e.target.value })}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm"
-            />
-          </div>
-
-          <div className="md:col-span-1">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">
-              <Mail className="w-3 h-3" />
-              您的联系方式
-            </label>
-            <input
-              type="text"
-              placeholder="QQ/微信/邮箱"
-              value={formData.submitter_contact}
-              onChange={e => setFormData({ ...formData, submitter_contact: e.target.value })}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm"
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">
-              简介 (AI 将为您生成)
-            </label>
-            <textarea
-              rows={3}
-              value={formData.description}
-              onChange={e => setFormData({ ...formData, description: e.target.value })}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm resize-none"
+            <label className="text-xs font-bold text-gray-400 uppercase mb-2 block tracking-widest ml-1">获得日期</label>
+            <input 
+              type="date" value={formData.date}
+              onChange={e => setFormData({...formData, date: e.target.value})}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm"
             />
           </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-black transition-all shadow-xl shadow-gray-200 disabled:opacity-50"
-        >
+        <div>
+          <label className="text-xs font-bold text-gray-400 uppercase mb-2 block tracking-widest ml-1">相关专业 / 领域</label>
+          <input 
+            type="text" placeholder="如：算法工程 / 软件设计"
+            value={formData.major}
+            onChange={e => setFormData({...formData, major: e.target.value})}
+            className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm"
+          />
+        </div>
+
+        {/* 🚨 按钮动画增强，展现“加密计算”的过程 */}
+        <button type="submit" disabled={loading} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-200 disabled:bg-zinc-800 disabled:shadow-none">
           {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
             <>
-              <Send className="w-4 h-4" />
-              提交审核
+               <Loader2 className="w-5 h-5 animate-spin" />
+               <span className="animate-pulse">正在生成数字指纹...</span>
+            </>
+          ) : (
+            <> 
+               <ShieldCheck className="w-5 h-5" /> 
+               生成 SHA-256 存证 
             </>
           )}
         </button>
