@@ -161,15 +161,7 @@ export const GeekActivityBoard: React.FC<{ userId?: string }> = ({ userId }) => 
           高阶数据分析与活跃度
         </h2>
 
-        {/* 🚀 AI 匹配触发按钮 */}
-        <button
-          onClick={handleAIMatch}
-          disabled={isMatching}
-          className="flex items-center gap-2 px-6 py-2.5 bg-gray-900 hover:bg-blue-600 text-white rounded-full text-sm font-black transition-all shadow-lg active:scale-95 disabled:opacity-50"
-        >
-          {isMatching ? <Sparkles className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-          开启 AI 星系组队
-        </button>
+
       </div>
 
       {/* 🌌 AI 聚类结果展示区 (仅在有数据时显示) */}

@@ -1,9 +1,19 @@
+// src/lib/supabaseClient.ts
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
-export const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+// 1. 先创建一个内部实例
+const client = createClient(supabaseUrl, supabaseAnonKey);
+
+// 2. 🚨 关键：同时导出两个名字！
+// 这样：老代码用的 supabaseClient 还在，新代码用的 supabase 也有了
+export const supabaseClient = client;
+export const supabase = client;
+
+// --- 下面的所有函数都不用动了，它们会自动指向 client ---
+// --- 因为它们内部使用的是 supabaseClient，而我们上面已经导出了 ---
 
 // --- 🚨 核心类型定义 (全量补齐字段，防止导入组件报错) ---
 
