@@ -45,7 +45,7 @@ export const FocusTimer: React.FC<{
 
       // 🚨 关键：通知 React Query 重新拉取日历数据
       await queryClient.invalidateQueries({ queryKey: ['focusSessions', userId] });
-      toast.success('专注数据已同步至云端，女王大人');
+      toast.success('专注数据已同步至云端');
 
       if (onSessionComplete) onSessionComplete();
     } catch (e) {

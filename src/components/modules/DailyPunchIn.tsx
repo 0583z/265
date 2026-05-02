@@ -67,7 +67,7 @@ export const DailyPunchIn: React.FC<{
     onSuccess: (data) => {
       setAnalyzedData(data);
       setContent('');
-      toast.success('打卡成功，女王大人！');
+      toast.success('打卡成功！');
       // 🚨 强制刷新打卡记录，确保日历瞬间亮起
       queryClient.invalidateQueries({ queryKey: ['dailyLogs', userId] });
     }
