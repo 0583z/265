@@ -74,28 +74,19 @@ function MainDashboard() {
   const allCompetitions = (dbCompetitions.length > 0 ? dbCompetitions : COMPETITIONS) as any[];
 
   // 🚀 第一步：构建真实读取的“极客资产网”
-  // 此逻辑严格读取您的 Supabase 荣誉、GitHub 仓库和深度学习记录，不再是死数据
   const dynamicUserAssets = {
-    // 1. 真实荣誉：提取已确权的成就（如您已通过的 CCF CSP 41次认证）
     honors: userHonors.map(h => ({
       name: h.competition_name || '',
       level: h.award_level || '',
       type: h.competition_name?.toLowerCase().includes('算法') || h.competition_name?.toUpperCase().includes('CSP') ? 'algorithm' : 'project'
     })),
-
-    // 2. 实战代码：直接读取您拉取到的 GitHub 真实仓库名
     repos: userRepos.map(r => r.name.toLowerCase()),
-
-    // 3. 学习记录：识别您对 Xiaomi Notes 等项目的深度源码拆解行为
     learningLogs: userHonors
       .filter(h => h.competition_name?.includes('源码') || h.competition_name?.includes('分析'))
       .map(h => h.competition_name || ''),
-
-    // 4. 基础极客基因：您的核心技术栈快照
     rawSkills: ['java', 'c++', 'python', 'k-means', 'android', 'bfs', 'dfs', 'dynamic programming']
   };
 
-  // GitHub API 报错诊断逻辑
   const fetchRealGithubRepos = async () => {
     if (!githubId.trim()) return toast.error('请输入 GitHub 用户名');
     setIsFetchingGithub(true);
@@ -171,27 +162,38 @@ function MainDashboard() {
     else setUserSubscriptions([]);
   }, [isAuthenticated, user?.id]);
 
+  // 🚨 --- 核心修复区：让 Bug 无处遁形的 handleToggleSubscription ---
   const handleToggleSubscription = async (compId: string, compName?: string) => {
-    if (!isAuthenticated) {
+    // 1. 防空指针闪崩
+    if (!isAuthenticated || !user?.id) {
       setShowAuthModal(true);
       return;
     }
-    const already = userSubscriptions.includes(compId);
+
+    const safeCompId = String(compId);
+
+    const already = userSubscriptions.includes(safeCompId);
+
     try {
       if (already) {
-        if (!compId.startsWith('private_')) {
-          await supabase.from('subscriptions').delete().eq('user_id', user!.id).eq('competition_id', compId);
+        if (!safeCompId.startsWith('private_')) {
+          const { error } = await supabase.from('subscriptions').delete().eq('user_id', user.id).eq('competition_id', safeCompId);
+          if (error) throw error;
         }
-        setUserSubscriptions(prev => prev.filter(id => id !== compId));
+        setUserSubscriptions(prev => prev.filter(id => id !== safeCompId));
         toast.info(`已取消订阅: ${compName || ''}`);
       } else {
-        if (!compId.startsWith('private_')) {
-          await supabase.from('subscriptions').insert([{ user_id: user!.id, competition_id: compId }]);
+        if (!safeCompId.startsWith('private_')) {
+          const { error } = await supabase.from('subscriptions').insert([{ user_id: user.id, competition_id: safeCompId }]);
+          if (error) throw error;
         }
-        setUserSubscriptions(prev => [...prev, compId]);
+        setUserSubscriptions(prev => [...prev, safeCompId]);
         toast.success(`✅ 成功订阅 ${compName || ''}`);
       }
-    } catch (e) { toast.error('操作失败，请重试'); }
+    } catch (e: any) {
+      console.error("🚨 抓到真正报错了:", e);
+      toast.error(`数据库操作被拒绝: ${e.message || JSON.stringify(e)}`);
+    }
   };
 
   const handleSubmitCustomComp = async () => {
@@ -258,7 +260,7 @@ function MainDashboard() {
   const fetchAndGenerateArchive = async () => {
     if (!user) return;
     setIsArchiveLoading(true);
-    let honorsText = '- 暂术记录';
+    let honorsText = '- 暂无记录';
     const { data: honors } = await supabase.from('user_honors').select('*').eq('user_id', user.id);
     if (honors && honors.length > 0) {
       honorsText = honors.map((item: any) => `- 🏆 ${item.competition_name} (${item.award_level || '暂无评级'})`).join('\n');
@@ -309,7 +311,7 @@ function MainDashboard() {
                 .filter(c => userSubscriptions.includes(c.id))
                 .map(c => ({
                   ...c,
-                  requirements: c.requirements || (c.tags ? c.tags : []), // 🚨 修复类型冲突
+                  requirements: c.requirements || (c.tags ? c.tags : []),
                   type: c.type || '综合赛事'
                 }))
               }
@@ -404,6 +406,7 @@ function MainDashboard() {
                   </div>
                   <select value={newAward.github_repo} onChange={e => setNewAward({ ...newAward, github_repo: e.target.value })} className="h-14 w-full rounded-2xl border border-gray-100 bg-gray-50 font-bold px-4 text-sm text-gray-700 outline-none">
                     <option value="">{userRepos.length > 0 ? "请选择确权仓库..." : "请先拉取您的 GitHub 仓库"}</option>
+                    <option value="none">无开源代码</option>
                     {userRepos.map(repo => <option key={repo.url} value={repo.url}>{repo.name}</option>)}
                   </select>
                 </div>
@@ -466,6 +469,7 @@ function MainDashboard() {
     </div>
   );
 }
+
 export default function App() {
   return (
     <Router>

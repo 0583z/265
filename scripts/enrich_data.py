@@ -4,7 +4,7 @@ import time
 
 # 基础配置
 # 注意：在 AI Studio 预览环境中，localhost 可能无法直接访问，建议使用完整 URL
-BASE_URL = "http://localhost:3000" 
+BASE_URL = "localhost:3000" 
 CHAT_API = f"{BASE_URL}/api/chat"
 SYNC_API = f"{BASE_URL}/api/sync-competitions"
 

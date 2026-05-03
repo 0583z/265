@@ -36,7 +36,7 @@ DATABASE_URL=postgresql://...
 bash
 运行
 npm run dev
-访问：http://localhost:3000
+访问：https://www.comp-hub.fun/
 📁 项目结构
 plaintext
 /

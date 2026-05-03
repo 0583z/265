@@ -12,6 +12,64 @@ import {
   supabaseClient,
 } from '@/src/lib/supabaseClient';
 
+// --- 技术修复：智能识别 API 地址 ---
+const getApiBase = () => {
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:3000';
+  }
+  return import.meta.env.VITE_API_BASE_URL || '';
+};
+
+const API_BASE = getApiBase();
+
+/**
+ * --- 【核心修复】防弹级流式数据解析引擎 ---
+ * 能够处理多行堆叠、数据截断以及 DeepSeek 特有的 delta 格式
+ */
+async function safeParseJSON(res: Response) {
+  const text = await res.text();
+  try {
+    // 1. 尝试标准解析（针对非流式返回）
+    return JSON.parse(text);
+  } catch (err) {
+    // 2. 处理流式数据块 (SSE)
+    const lines = text.split('\n');
+    let accumulatedContent = "";
+    let finalData: any = {};
+
+    for (const line of lines) {
+      const cleanLine = line.replace(/^data:\s*/, '').trim();
+      if (!cleanLine || cleanLine === '[DONE]') continue;
+
+      try {
+        const parsed = JSON.parse(cleanLine);
+
+        // 兼容 DeepSeek/OpenAI 的流式 delta 格式
+        const content = parsed.choices?.[0]?.delta?.content || "";
+        if (content) {
+          accumulatedContent += content;
+        }
+
+        // 兼容直接返回 title/body 的结构
+        if (parsed.title || parsed.body) {
+          finalData = { ...finalData, ...parsed };
+        }
+      } catch (e) {
+        // 跳过截断的无效 JSON 行
+        continue;
+      }
+    }
+
+    // 3. 兜底策略：如果 AI 返回的是纯文本，则将其放入 body 字段
+    if (accumulatedContent && !finalData.body) {
+      finalData.title = finalData.title || "极客导师建议";
+      finalData.body = accumulatedContent;
+    }
+
+    return finalData;
+  }
+}
+
 type MentorCard = { title: string; body: string; footer?: string };
 
 type MentorContextValue = {
@@ -25,8 +83,8 @@ export function useMentor(): MentorContextValue {
   const v = useContext(MentorContext);
   if (!v) {
     return {
-      notifyFocusComplete: async () => {},
-      notifyPunchComplete: async () => {},
+      notifyFocusComplete: async () => { },
+      notifyPunchComplete: async () => { },
     };
   }
   return v;
@@ -48,10 +106,6 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const k = `geek_morning_tip_${user.id}`;
     if (typeof localStorage !== 'undefined' && localStorage.getItem(k) === today) return;
 
-    const { data: sess } = await supabaseClient.auth.getSession();
-    const token = sess.session?.access_token;
-    if (!token) return;
-
     try {
       const [skills, focus, logs] = await Promise.all([
         fetchUserSkills(user.id),
@@ -60,23 +114,23 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ]);
       const md = buildUserContextMarkdown({ skills, focus, logs });
 
-      const res = await fetch('/api/mentor', {
+      const res = await fetch(`${API_BASE}/api/mentor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'morning', contextMarkdown: md }),
       });
-      const data = (await res.json()) as { title?: string; body?: string; challenge?: string; error?: string };
-      if (!res.ok) throw new Error(data.error || `早报 ${res.status}`);
-      if (data.title && data.body) {
+
+      const data = await safeParseJSON(res);
+      if (data.body) {
         showCard({
-          title: data.title,
+          title: data.title || "早间极客简报",
           body: data.body,
           footer: data.challenge ? `今日挑战：${data.challenge}` : undefined,
         });
         localStorage.setItem(k, today);
       }
     } catch (e) {
-      console.warn('[mentor] morning', e);
+      console.warn('[Mentor] 早报加载跳过', e);
     }
   }, [user?.id, showCard]);
 
@@ -90,14 +144,16 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const { data: sess } = await supabaseClient.auth.getSession();
         const token = sess.session?.access_token;
         let memoryBlock = '（无）';
+
         if (token) {
-          const hits = await searchAiMemoriesRag(token, `${p.title} ${p.category}`, { match_count: 5 });
-          if (hits.length) {
-            memoryBlock = hits.map((h) => `- [${h.topic}] ${(h.content || '').slice(0, 220)}`).join('\n');
+          const queryStr = `${p.title} ${p.category}`;
+          const hits = await searchAiMemoriesRag(token, queryStr);
+          if (hits && hits.length) {
+            memoryBlock = hits.map((h: any) => `- [${h.topic}] ${(h.content || '').slice(0, 220)}`).join('\n');
           }
         }
 
-        const res = await fetch('/api/mentor', {
+        const res = await fetch(`${API_BASE}/api/mentor`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -108,17 +164,17 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             memoryBlock,
           }),
         });
-        const data = (await res.json()) as { title?: string; body?: string; followUp?: string; error?: string };
-        if (!res.ok) throw new Error(data.error || `导师 ${res.status}`);
-        if (data.title && data.body) {
+
+        const data = await safeParseJSON(res);
+        if (data.body) {
           showCard({
-            title: data.title,
+            title: data.title || "专注达成反馈",
             body: data.body,
             footer: data.followUp,
           });
         }
       } catch (e) {
-        console.warn('[mentor] proactive focus', e);
+        console.warn('[Mentor] 专注反馈通知静默失败', e);
       }
     },
     [showCard],
@@ -130,14 +186,15 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const { data: sess } = await supabaseClient.auth.getSession();
         const token = sess.session?.access_token;
         let memoryBlock = '（无）';
+
         if (token) {
-          const hits = await searchAiMemoriesRag(token, p.summary, { match_count: 5 });
-          if (hits.length) {
-            memoryBlock = hits.map((h) => `- [${h.topic}] ${(h.content || '').slice(0, 220)}`).join('\n');
+          const hits = await searchAiMemoriesRag(token, p.summary);
+          if (hits && hits.length) {
+            memoryBlock = hits.map((h: any) => `- [${h.topic}] ${(h.content || '').slice(0, 220)}`).join('\n');
           }
         }
 
-        const res = await fetch('/api/mentor', {
+        const res = await fetch(`${API_BASE}/api/mentor`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -148,17 +205,17 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             memoryBlock: `打卡摘要：${p.summary.slice(0, 800)}\n\n${memoryBlock}`,
           }),
         });
-        const data = (await res.json()) as { title?: string; body?: string; followUp?: string; error?: string };
-        if (!res.ok) throw new Error(data.error || `导师 ${res.status}`);
-        if (data.title && data.body) {
+
+        const data = await safeParseJSON(res);
+        if (data.body) {
           showCard({
-            title: data.title,
+            title: data.title || "打卡寄语",
             body: data.body,
             footer: data.followUp,
           });
         }
       } catch (e) {
-        console.warn('[mentor] proactive punch', e);
+        console.warn('[Mentor] 打卡反馈静默失败', e);
       }
     },
     [showCard],
@@ -177,12 +234,12 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       {children}
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out" />
+          <Dialog.Overlay className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[90] w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-3xl border-2 border-zinc-800 bg-zinc-950 p-6 text-zinc-100 shadow-[12px_12px_0_0_#18181b]">
             <div className="flex items-start justify-between gap-3">
               <Dialog.Title className="text-lg font-black text-emerald-300">{card?.title}</Dialog.Title>
               <Dialog.Close asChild>
-                <button type="button" className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white" aria-label="关闭">
+                <button type="button" className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white">
                   <X className="h-5 w-5" />
                 </button>
               </Dialog.Close>
@@ -190,11 +247,11 @@ export const MentorProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             <Dialog.Description className="mt-3 text-sm font-bold leading-relaxed text-zinc-300">
               {card?.body}
             </Dialog.Description>
-            {card?.footer ? (
+            {card?.footer && (
               <div className="mt-4 rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-3 text-xs font-bold text-emerald-100">
                 {card.footer}
               </div>
-            ) : null}
+            )}
             <div className="mt-6 flex justify-end">
               <Button type="button" className="rounded-xl bg-emerald-600 font-black" onClick={() => setOpen(false)}>
                 知道了

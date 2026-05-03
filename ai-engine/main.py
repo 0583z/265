@@ -12,7 +12,7 @@ app = FastAPI(title="Geek Hub AI Match Engine")
 # 🚨 终极跨域配置：允许 React (3000端口) 的所有请求
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=["https://localhost:3000", "http://127.0.0.1:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
