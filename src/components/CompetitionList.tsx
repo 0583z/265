@@ -1,8 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { differenceInDays, parseISO, subDays, format } from 'date-fns';
-import { Search, Clock, Trophy, Code, BookOpen, Atom, ArrowRight, Bell, BellRing, BookmarkCheck, Filter, AlertCircle, CalendarClock, X } from 'lucide-react';
+import { Search, Clock, Trophy, Code, BookOpen, Atom, ArrowRight, Bell, BellRing, BookmarkCheck, Filter, AlertCircle, CalendarClock, X, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { supabase, fetchUserAwards, fetchUserProfile } from '@/src/lib/supabaseClient';
+import { calculateGeekPower, GeekUserData } from '@/src/lib/geekScoreUtils';
+import { useAuth } from '../context/AuthContext';
 
 export const COMPETITIONS = [
   { id: '1', name: 'CCF CSP 计算机能力认证', category: '工科与IT', level: '国家级', deadline: '2026-03-29', tags: ['算法', 'C++'], icon: Code },
@@ -28,6 +31,7 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
   onItemClick,
   theme = 'light'
 }) => {
+  const { user } = useAuth();
   const [activeCategory, setActiveCategory] = useState('全部');
   const [activeStatus, setActiveStatus] = useState('全部状态');
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,12 +41,74 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
   const [selectedCompForSub, setSelectedCompForSub] = useState<any>(null);
   const [customReminders, setCustomReminders] = useState<Record<string, string>>({});
 
+  // 🌟 新增：用户多维确权状态
+  const [geekStats, setGeekStats] = useState<any>(null);
+  const [userAwards, setUserAwards] = useState<any[]>([]);
+  const [userProfile, setUserProfile] = useState<any>(null);
+
   useEffect(() => {
     setCustomReminders(JSON.parse(localStorage.getItem('geek_custom_reminders') || '{}'));
-  }, []);
+
+    const loadAllGeekData = async () => {
+      if (!user?.id) return;
+      const [statsRes, awardsRes, profileRes] = await Promise.all([
+        supabase.from('github_stats').select('*').eq('user_id', user.id).maybeSingle(),
+        fetchUserAwards(user.id),
+        fetchUserProfile(user.id)
+      ]);
+      if (statsRes.data) setGeekStats(statsRes.data);
+      if (awardsRes) setUserAwards(awardsRes);
+      if (profileRes) setUserProfile(profileRes);
+    };
+    loadAllGeekData();
+  }, [user?.id]);
 
   const isDark = theme === 'dark';
   const sourceData = externalComps && externalComps.length > 0 ? externalComps : COMPETITIONS;
+
+  // 🌟🌟🌟 核心：全网通用型赛事匹配引擎，打破 15% 魔咒 🌟🌟🌟
+  const getDynamicMatch = (comp: any) => {
+    if (!user) return "15.0%";
+
+    const compTags = comp.tags || [];
+    const compName = (comp.name || "").toUpperCase();
+    const compCat = (comp.category || "").toLowerCase();
+
+    let matchedWeight = 1.2;
+    const totalSlots = Math.max(compTags.length, 5); // 基准池稍微大一点，让分数差异更明显
+
+    const major = (userProfile?.major || "").toLowerCase();
+    if (major.includes("计算机") || major.includes("软件") || major.includes("工程")) {
+      if (compCat.includes("工科") || compCat.includes("it")) matchedWeight += 1.5;
+    }
+
+    const hasAlgoAward = userAwards.some(a =>
+      ['蓝桥', 'ACM', 'CSP', '程序设计', '认证'].some(k => (a.competition_name || "").includes(k))
+    );
+    if (hasAlgoAward && (compName.includes("算法") || compName.includes("电子设计") || compName.includes("挑战") || compTags.includes("算法") || compCat.includes("工科"))) {
+      matchedWeight += 2.5;
+    }
+
+    if (geekStats?.total_lines > 0) {
+      matchedWeight += 1;
+    }
+
+    const data: GeekUserData = {
+      cspScore: geekStats?.csp_score || 0,
+      algoTagsCount: geekStats?.algo_commits || (hasAlgoAward ? 5 : 0),
+      totalLinesChanged: geekStats?.total_lines || 0,
+      filesChanged: geekStats?.files_changed || 0,
+      pullRequests: geekStats?.pr_count || 0,
+      issues: geekStats?.issue_count || 0,
+      reviews: geekStats?.review_count || 0,
+      actionsLast30Days: geekStats?.recent_actions || 0,
+      languageProportions: geekStats?.lang_distribution || [1],
+      matchedSkillsCount: Math.min(matchedWeight, totalSlots),
+      totalContestSkills: totalSlots
+    };
+
+    return calculateGeekPower(data).Match;
+  };
 
   const filteredCompetitions = useMemo(() => {
     return sourceData.filter(comp => {
@@ -161,7 +227,7 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
           ))}
         </div>
 
-        {/* 🚨 比赛卡片适配 - 解决图一核心问题 */}
+        {/* 🚨 比赛卡片适配 - 解决核心问题 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mt-4">
           <AnimatePresence>
             {filteredCompetitions.map((comp: any) => {
@@ -169,6 +235,8 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
               const Icon = comp.icon || Trophy;
               const isSubbed = subscribedIds.includes(comp.id);
               const customRem = customReminders[comp.id];
+              // 🌟 动态确权匹配计算
+              const dynamicMatch = getDynamicMatch(comp);
 
               return (
                 <motion.div
@@ -183,8 +251,26 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
                     <Icon className="w-8 h-8 text-blue-600" />
                   </div>
                   <h3 className={`text-xl font-black mb-4 line-clamp-2 min-h-[3.5rem] leading-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>{comp.name}</h3>
-                  <div className={`mt-auto pt-6 border-t space-y-4 ${isDark ? 'border-zinc-800' : 'border-gray-50'}`}>
 
+                  {/* 🌟🌟🌟 新增：动态确权进度条（适配图一风格） 🌟🌟🌟 */}
+                  <div className="mb-6 space-y-2">
+                    <div className="flex justify-between items-end">
+                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-tighter flex items-center gap-1">
+                        <Zap className="w-3 h-3 fill-blue-600" /> 确权算力匹配
+                      </span>
+                      <span className={`text-lg font-black italic ${isDark ? 'text-white' : 'text-gray-900'}`}>{dynamicMatch}</span>
+                    </div>
+                    <div className={`h-2.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-zinc-800' : 'bg-gray-100'}`}>
+                      <motion.div
+                        initial={{ width: '15%' }}
+                        animate={{ width: dynamicMatch }}
+                        transition={{ duration: 1.5, ease: "easeOut" }}
+                        className="h-full bg-gradient-to-r from-blue-600 to-indigo-400 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className={`mt-auto pt-6 border-t space-y-4 ${isDark ? 'border-zinc-800' : 'border-gray-50'}`}>
                     <div className="flex justify-between items-center text-[11px] font-black uppercase tracking-wider">
                       <div className={`flex items-center gap-2 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
                         <Clock className="w-4 h-4" /> DDL：{comp.deadline ? comp.deadline.split('T')[0] : '待定'}

@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchUserProfile, upsertUserProfile, fetchUserAwards, insertUserAward,
-  submitHofApplication, fetchTotalFocusMinutes, type UserAwardRow
+  submitHofApplication, fetchTotalFocusMinutes, type UserAwardRow, supabase // 🌟 引出 supabase 以对接算力引擎
 } from '../lib/supabaseClient';
 import { UserAvatar } from './UserAvatar';
 import { Button } from '@/components/ui/button';
@@ -52,7 +52,7 @@ const AITutor: React.FC<{ onAddTodo: (content: string) => void, externalPrompt?:
 
       // 🚨 本地智能大脑：自动识别并给出专业排版的回复
       if (query.includes('算法')) {
-        reply = "🤖 极客私教分析完成：【算法】维度 (当前评估：40%)\n\n您的算法基础已经入门，但应对高阶比赛还需系统性突破。行动计划如下：\n\n1. 专项突破：本周攻克「动态规划」与「图论」，在 LeetCode 完成 10 道中等真题。\n2. 实战检验：报名最近一次的 CCF CSP 认证，以 200 分为首期目标。\n3. 资产沉淀：开启【确权模式】记录每次提交。系统将自动为您加权。";
+        reply = "🤖 极客私教分析完成：【算法】维度 (当前评估：40%)\n\n您的算法基础已经入门，但应对高阶比赛还需系统性突破。行动计划如下：\n\n1. 专项突破：本周攻克「动态规划」与「图论」，在 LeetCode 完成 10 道中等真题。\n2. 实战检验：报名最近一次的认证考试，以 200 分为首期目标。\n3. 资产沉淀：开启【确权模式】记录每次提交。系统将自动为您加权。";
       } else if (query.includes('前端') || query.includes('ui')) {
         reply = "🤖 极客私教分析完成：【前端/UI】维度 (当前评估：40%)\n\n您已具备基础视图构建能力，下一步应向「前端工程化」进阶：\n\n1. 源码拆解：阅读 Vue3/React 核心源码，理解响应式原理与 Diff 算法。\n2. 最佳实践：在下个项目中引入 TypeScript + TailwindCSS。\n3. 资产沉淀：将个人组件打包发布至 npm，并在本平台进行【成果确权】。";
       } else if (query.includes('工程交付')) {
@@ -209,6 +209,39 @@ export const ProfileView: React.FC<{ competitions: any[]; subscribedIds: string[
       const events = await evRes.json(); const repos = await reposRes.json();
       localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), events, repos }));
       processGitHubData(events, repos);
+
+      // 🌟🌟🌟 新增：数据桥接管道 (全网普适版) 🌟🌟🌟
+      if (user?.id && events && repos) {
+        try {
+          const algoCommits = events.filter((e: any) => e.type === 'PushEvent' && e.payload?.commits?.some((c: any) => {
+            const msg = c.message.toLowerCase();
+            return msg.includes('algo') || msg.includes('leetcode') || msg.includes('codeforces') || msg.includes('csp') || msg.includes('lanqiao');
+          })).length;
+
+          const totalLines = events.filter((e: any) => e.type === 'PushEvent').reduce((acc: number, e: any) => acc + (e.payload?.commits?.length || 0) * 120, 0);
+          const prCount = events.filter((e: any) => e.type === 'PullRequestEvent').length;
+          const issueCount = events.filter((e: any) => e.type === 'IssuesEvent').length;
+
+          const langDist = repos.map((r: any) => r.language).filter(Boolean);
+          const langCounts = langDist.reduce((acc: any, lang: string) => { acc[lang] = (acc[lang] || 0) + 1; return acc; }, {});
+          const languageProportions = Object.values(langCounts).map((c: any) => Number(c) / (langDist.length || 1));
+
+          await supabase.from('github_stats').upsert({
+            user_id: user.id,
+            algo_commits: algoCommits,
+            total_lines: totalLines,
+            files_changed: events.length * 2,
+            pr_count: prCount,
+            issue_count: issueCount,
+            review_count: events.filter((e: any) => e.type === 'PullRequestReviewEvent').length,
+            recent_actions: events.length,
+            lang_distribution: languageProportions,
+            updated_at: new Date().toISOString()
+          });
+        } catch (err) {
+          console.error("通用引擎同步失败", err);
+        }
+      }
     } catch (e) { if (cachedDataStr) { const { events, repos } = JSON.parse(cachedDataStr); processGitHubData(events, repos); } } finally { setIsSyncingGh(false); }
   };
 
@@ -262,8 +295,38 @@ export const ProfileView: React.FC<{ competitions: any[]; subscribedIds: string[
     const newAwardsList = [tempUI, ...awards]; setAwards(newAwardsList);
     if (user?.id) localStorage.setItem(`awards_${user.id}`, JSON.stringify(newAwardsList));
     setShowAwardModal(false); setNewAward({ name: '', level: '', date: '', github_repo: '' }); toast.success('成就已录入，数字确权更新中');
-    try { await insertUserAward({ user_id: tempUI.user_id, competition_name: tempUI.competition_name, award_level: tempUI.award_level, award_date: tempUI.award_date! }); }
-    catch (e) { console.error("DB Insert Error", e); toast.info('云端同步稍有延迟，数据已安全存入本地确权库'); }
+    try {
+      await insertUserAward({ user_id: tempUI.user_id, competition_name: tempUI.competition_name, award_level: tempUI.award_level, award_date: tempUI.award_date! });
+
+      // 🌟🌟🌟 新增：通用化赛事成绩捕获 🌟🌟🌟
+      const upperName = tempUI.competition_name.toUpperCase();
+      const upperLevel = tempUI.award_level.toUpperCase();
+      if (upperName.includes('CSP') || upperName.includes('蓝桥杯') || upperName.includes('ACM') || upperName.includes('天梯赛') || upperName.includes('认证') || upperName.includes('程序设计')) {
+        const scoreMatch = upperLevel.match(/\d+/);
+        let algoScore = 40;
+
+        if (scoreMatch) {
+          algoScore = parseInt(scoreMatch[0]);
+          if (algoScore <= 10) {
+            if (algoScore === 1) algoScore = 300;
+            else if (algoScore === 2) algoScore = 200;
+            else if (algoScore === 3) algoScore = 100;
+          }
+        } else if (upperLevel.includes('一等') || upperLevel.includes('金') || upperLevel.includes('国')) {
+          algoScore = 300;
+        } else if (upperLevel.includes('二等') || upperLevel.includes('银')) {
+          algoScore = 200;
+        } else if (upperLevel.includes('三等') || upperLevel.includes('铜')) {
+          algoScore = 100;
+        }
+
+        const { data: existStats } = await supabase.from('github_stats').select('csp_score').eq('user_id', user!.id).maybeSingle();
+        const currentBest = existStats?.csp_score || 0;
+        if (algoScore > currentBest) {
+          await supabase.from('github_stats').upsert({ user_id: user!.id, csp_score: algoScore });
+        }
+      }
+    } catch (e) { console.error("DB Insert Error", e); toast.info('云端同步稍有延迟，数据已安全存入本地确权库'); }
   };
 
   const handleDeleteAward = (id: string) => {
@@ -435,72 +498,6 @@ export const ProfileView: React.FC<{ competitions: any[]; subscribedIds: string[
               <Button onClick={handleAddAward} className="w-full h-14 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl mt-4 shadow-md transition-all active:scale-95">确认录入</Button>
             </div>
             <Dialog.Close className="absolute top-6 right-6 text-gray-400 hover:text-gray-900 transition-colors"><X className="w-5 h-5" /></Dialog.Close>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-
-      {/* --- 🎁 新增：千人千面·动态档案签发台 (Apple Bento 风格) --- */}
-      <Dialog.Root open={showExportModal} onOpenChange={setShowExportModal}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100]" />
-          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-lg bg-white rounded-[2rem] p-8 shadow-2xl z-[101] animate-in zoom-in-95 flex flex-col gap-6">
-
-            <div className="flex items-center justify-between">
-              <div>
-                <Dialog.Title className="text-xl font-black tracking-tight text-gray-900 flex items-center gap-2"><Lock className="w-5 h-5 text-blue-600" /> 签发动态数字档案</Dialog.Title>
-                <p className="text-xs font-medium text-gray-400 mt-1 uppercase tracking-widest">Dynamic Dossier Configuration</p>
-              </div>
-              <Dialog.Close className="p-2 bg-gray-50 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-900 transition-colors"><X className="w-5 h-5" /></Dialog.Close>
-            </div>
-
-            <div className="space-y-5">
-              {/* 视角选择 */}
-              <div className="space-y-3">
-                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">1. 选择呈现视角模式</span>
-                <div className="grid grid-cols-2 gap-3">
-                  <div onClick={() => setExportMode('geek')} className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${exportMode === 'geek' ? 'border-blue-500 bg-blue-50/50 shadow-sm' : 'border-gray-100 hover:border-gray-200'}`}>
-                    <TerminalSquare className={`w-6 h-6 mb-2 ${exportMode === 'geek' ? 'text-blue-600' : 'text-gray-400'}`} />
-                    <h4 className={`text-sm font-bold ${exportMode === 'geek' ? 'text-blue-900' : 'text-gray-700'}`}>硬核极客模式</h4>
-                    <p className={`text-[10px] mt-1 ${exportMode === 'geek' ? 'text-blue-600' : 'text-gray-400'}`}>突出 GitHub 热力与算法底层能力</p>
-                  </div>
-                  <div onClick={() => setExportMode('pm')} className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${exportMode === 'pm' ? 'border-emerald-500 bg-emerald-50/50 shadow-sm' : 'border-gray-100 hover:border-gray-200'}`}>
-                    <Briefcase className={`w-6 h-6 mb-2 ${exportMode === 'pm' ? 'text-emerald-600' : 'text-gray-400'}`} />
-                    <h4 className={`text-sm font-bold ${exportMode === 'pm' ? 'text-emerald-900' : 'text-gray-700'}`}>全局产品模式</h4>
-                    <p className={`text-[10px] mt-1 ${exportMode === 'pm' ? 'text-emerald-600' : 'text-gray-400'}`}>放大项目复盘、统筹与架构思维</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 过期时间选择 */}
-              <div className="space-y-3">
-                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">2. 访客雷达与阅后即焚</span>
-                <div className="flex bg-gray-50 p-1 rounded-2xl border border-gray-100">
-                  {(['72h', '7d', 'never'] as const).map(time => (
-                    <button key={time} onClick={() => setExportExpiry(time)} className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${exportExpiry === time ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
-                      {time === '72h' ? '72小时后失效' : time === '7d' ? '7天后失效' : '永久有效'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 生成按钮 & 结果呈现 */}
-              {!generatedLink ? (
-                <Button onClick={handleGenerateLink} disabled={isGeneratingLink} className="w-full h-14 bg-blue-600 hover:bg-blue-700 text-white font-black text-sm rounded-2xl mt-2 shadow-lg shadow-blue-600/20 transition-all">
-                  {isGeneratingLink ? <><Zap className="w-4 h-4 mr-2 animate-pulse" /> 上链确权中...</> : <><Sparkles className="w-4 h-4 mr-2" /> ⚡️ 铸造专属链接</>}
-                </Button>
-              ) : (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-zinc-950 rounded-2xl border border-zinc-800 flex items-center justify-between gap-4 mt-2">
-                  <div className="flex-1 overflow-hidden">
-                    <p className="text-[10px] font-mono text-zinc-500 mb-1">LINK_GENERATED</p>
-                    <p className="text-xs font-mono text-blue-400 truncate select-all">{generatedLink}</p>
-                  </div>
-                  <button onClick={copyToClipboard} className={`p-3 rounded-xl transition-all shrink-0 ${hasCopied ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-800 hover:bg-zinc-700 text-white'}`}>
-                    {hasCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </motion.div>
-              )}
-            </div>
-
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

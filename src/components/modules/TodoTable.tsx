@@ -79,14 +79,13 @@ export const TodoTable: React.FC = () => {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 key={todo.id}
-                className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${
-                  todo.completed 
-                    ? 'bg-gray-50 border-transparent opacity-60' 
+                className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${todo.completed
+                    ? 'bg-gray-50 border-transparent opacity-60'
                     : 'bg-white border-gray-50 shadow-sm hover:border-blue-100'
-                }`}
+                  }`}
               >
                 {/* 打钩控制 */}
-                <button 
+                <button
                   onClick={() => toggleTodo(todo.id)}
                   className={`shrink-0 transition-transform active:scale-90 ${todo.completed ? 'text-emerald-500' : 'text-gray-300 hover:text-blue-500'}`}
                 >
@@ -111,7 +110,7 @@ export const TodoTable: React.FC = () => {
                 </div>
 
                 {/* 删除 */}
-                <button 
+                <button
                   onClick={() => deleteTodo(todo.id)}
                   className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
                 >
@@ -124,4 +123,4 @@ export const TodoTable: React.FC = () => {
       </div>
     </div>
   );
-};
+};                                                                                
